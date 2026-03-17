@@ -1,0 +1,25 @@
+{
+  "name": "@agentrux/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
+  "keywords": ["openclaw", "agentrux", "pubsub", "a2a", "agent"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/agentrux/agentrux-plugins", "directory": "plugins/openclaw" },
+  "files": ["dist/", "package.json", "README.md"],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "install": {
+      "npmSpec": "@agentrux/openclaw-plugin"
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "n8n-nodes-agentrux",
+  "version": "0.2.0",
+  "description": "n8n community node for AgenTrux — A2A authenticated ephemeral data pipe service",
+  "keywords": ["n8n-community-node-package", "agentrux", "pubsub", "events", "a2a"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/agentrux/agentrux-plugins", "directory": "plugins/n8n" },
+  "files": ["dist/", "package.json", "README.md"],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/AgenTruxApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/AgenTrux/AgenTrux.node.js",
+      "dist/nodes/AgenTrux/AgenTruxTrigger.node.js"
+    ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": ">=1.0.0"
+  },
+  "devDependencies": {
+    "n8n-workflow": "^1.30.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
