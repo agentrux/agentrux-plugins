@@ -130,7 +130,7 @@ async function ensureToken(): Promise<string> {
   // Full auth
   const r = await httpJson("POST", `${credentials.base_url}/auth/token`, {
     script_id: credentials.script_id,
-    clientSecret: credentials.clientSecret,
+    client_secret: credentials.clientSecret,
   });
   if (r.status !== 200) throw new Error(`Auth failed: ${JSON.stringify(r.data)}`);
   tokenState = {
@@ -345,19 +345,19 @@ export default function (api: any) {
       parameters: {
         type: "object",
         properties: {
-          token: { type: "string", description: "Grant token (inv_...)" },
+          invite_code: { type: "string", description: "Invite code (inv_...)" },
         },
-        required: ["token"],
+        required: ["invite_code"],
       },
-      async execute(_id: string, params: { token: string }) {
+      async execute(_id: string, params: { invite_code: string }) {
         if (!credentials) {
           credentials = loadCredentials();
           if (!credentials) throw new Error("Not connected. Use activate first.");
         }
         const r = await httpJson("POST", `${credentials.base_url}/auth/redeem-grant`, {
-          token: params.token,
+          invite_code: params.invite_code,
           script_id: credentials.script_id,
-          clientSecret: credentials.clientSecret,
+          client_secret: credentials.clientSecret,
         });
         if (r.status >= 400) {
           return { content: [{ type: "text", text: `Grant redemption failed: ${JSON.stringify(r.data)}` }] };

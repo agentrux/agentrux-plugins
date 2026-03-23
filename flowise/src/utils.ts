@@ -39,7 +39,7 @@ async function authenticate(
 ): Promise<TokenState> {
     const resp = await httpFetch(`${baseUrl}/auth/token`, 'POST', {
         script_id: scriptId,
-        clientSecret,
+        client_secret: clientSecret,
     });
     if (resp.status >= 400) {
         throw new Error(`AgenTrux authentication failed (${resp.status}): ${JSON.stringify(resp.data)}`);
@@ -75,9 +75,9 @@ async function redeemGrant(
     clientSecret: string,
 ): Promise<void> {
     const resp = await httpFetch(`${baseUrl}/auth/redeem-grant`, 'POST', {
-        token: inviteCode,
+        invite_code: inviteCode,
         script_id: scriptId,
-        clientSecret,
+        client_secret: clientSecret,
     });
     if (resp.status >= 400) {
         throw new Error(`Grant redemption failed (${resp.status}): ${JSON.stringify(resp.data)}`);

@@ -88,7 +88,7 @@ export async function activateScript(
 	if (cached) return cached;
 
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/activate`, {
-		token: activationCode,
+		activation_code: activationCode,
 	});
 	if (resp.status >= 400) {
 		throw new NodeOperationError(
@@ -121,9 +121,9 @@ async function redeemGrantOnce(
 	if (grantRedeemedKeys.has(key)) return;
 
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/redeem-grant`, {
-		token: inviteCode,
+		invite_code: inviteCode,
 		script_id: scriptId,
-		clientSecret,
+		client_secret: clientSecret,
 	});
 	// 4xx is OK — grant may already be consumed
 	grantRedeemedKeys.add(key);
@@ -184,7 +184,7 @@ async function authenticate(
 ): Promise<TokenState> {
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/token`, {
 		script_id: scriptId,
-		clientSecret,
+		client_secret: clientSecret,
 	});
 	if (resp.status >= 400) {
 		throw new NodeOperationError(

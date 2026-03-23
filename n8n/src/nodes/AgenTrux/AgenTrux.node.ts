@@ -264,9 +264,9 @@ export class AgenTrux implements INodeType {
 					if (operation === 'redeemGrant') {
 						const inviteCode = this.getNodeParameter('inviteCode', i) as string;
 						const resp = await rawHttp(this, 'POST', `${creds.baseUrl}/auth/redeem-grant`, {
-							token: inviteCode,
+							invite_code: inviteCode,
 							script_id: creds.scriptId,
-							clientSecret: creds.clientSecret,
+							client_secret: creds.clientSecret,
 						});
 						if (resp.status >= 400) {
 							throw new NodeOperationError(
