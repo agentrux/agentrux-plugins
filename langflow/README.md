@@ -44,4 +44,4 @@ Langflow's global variables:
 - `AGENTRUX_BASE_URL`
 - `AGENTRUX_SCRIPT_ID`
 - `AGENTRUX_SECRET`
-- `AGENTRUX_GRANT_TOKEN` (optional)
+- `AGENTRUX_INVITE_CODE` (optional)

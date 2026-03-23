@@ -1,7 +1,7 @@
 """AgenTrux Connection Component for Langflow.
 
 Centralised authentication: obtains a JWT via get_token() and optionally
-redeems a grant token, then exposes an initialised AgenTruxClient as
+redeems a share code, then exposes an initialised AgenTruxClient as
 output Data so downstream components can reuse the same session.
 """
 from __future__ import annotations
@@ -38,15 +38,15 @@ class AgenTruxConnectionComponent(Component):
             required=True,
         ),
         SecretStrInput(
-            name="secret",
-            display_name="Secret",
-            info="Script secret for authentication.",
+            name="client_secret",
+            display_name="Client Secret",
+            info="Script API key for authentication.",
             required=True,
         ),
         SecretStrInput(
-            name="grant_token",
-            display_name="Grant Token",
-            info="Optional grant token for cross-account access.",
+            name="invite_code",
+            display_name="Invite Code",
+            info="Optional share code for cross-account access.",
             required=False,
         ),
     ]
@@ -60,28 +60,28 @@ class AgenTruxConnectionComponent(Component):
     ]
 
     async def _authenticate(self) -> dict[str, Any]:
-        """Obtain JWT and optionally redeem grant token."""
+        """Obtain JWT and optionally redeem share code."""
         from agentrux.sdk.facade import AgenTruxClient
 
         base_url: str = self.base_url
         script_id: str = self.script_id
-        secret: str = self.secret
-        grant_token: str | None = self.grant_token or None
+        client_secret: str = self.client_secret
+        invite_code: str | None = self.invite_code or None
 
         # Use a temporary client just for auth endpoints
         temp_client = AgenTruxClient(base_url=base_url, token="")
 
-        # Redeem grant token first if provided
-        if grant_token:
-            logger.info("Redeeming grant token for script %s", script_id)
+        # Redeem share code first if provided
+        if invite_code:
+            logger.info("Redeeming share code for script %s", script_id)
             await temp_client.redeem_grant(
-                token=grant_token,
+                token=invite_code,
                 script_id=script_id,
-                secret=secret,
+                client_secret=client_secret,
             )
 
         # Obtain JWT
-        token_data = await temp_client.get_token(script_id, secret)
+        token_data = await temp_client.get_token(script_id, client_secret)
         await temp_client.close()
         return token_data
 

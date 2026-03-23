@@ -54,7 +54,7 @@ OpenClaw> Bob に「明日の会議資料まとめて」と送って
 
 ```
 OpenClaw> この grant token を使って: gtk_xyz...
-→ agentrux_redeem_grant(token="gtk_xyz...")
+→ agentrux_redeem_grant(token="inv_xyz...")
 ```
 
 ## Configuration

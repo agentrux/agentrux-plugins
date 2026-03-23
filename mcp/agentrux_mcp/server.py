@@ -194,15 +194,15 @@ def _create_server(config: MCPConfig) -> Server:
         # Create a temporary client to call get_token
         tmp = AgenTruxClient(base_url=config.base_url, token="")
 
-        # Redeem grant token if provided (cross-account access)
-        if config.grant_token:
-            logger.info("Redeeming grant token...")
+        # Redeem share code if provided (cross-account access)
+        if config.invite_code:
+            logger.info("Redeeming share code...")
             await tmp.redeem_grant(
-                config.grant_token, config.script_id, config.secret
+                config.invite_code, config.script_id, config.client_secret
             )
 
         # Obtain JWT
-        token_data = await tmp.get_token(config.script_id, config.secret)
+        token_data = await tmp.get_token(config.script_id, config.client_secret)
         await tmp.close()
 
         _client = AgenTruxClient(

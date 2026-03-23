@@ -14,8 +14,8 @@ class MCPConfig:
 
     base_url: str
     script_id: str
-    secret: str
-    grant_token: str | None = None
+    client_secret: str
+    invite_code: str | None = None
 
     @classmethod
     def from_env(cls) -> MCPConfig:
@@ -24,14 +24,14 @@ class MCPConfig:
         Required:
             AGENTRUX_BASE_URL: Base URL of the AgenTrux server
             AGENTRUX_SCRIPT_ID: Script ID for authentication
-            AGENTRUX_SECRET: Script secret for authentication
+            AGENTRUX_CLIENT_SECRET: Script API key for authentication
 
         Optional:
-            AGENTRUX_GRANT_TOKEN: Grant token for cross-account access
+            AGENTRUX_INVITE_CODE: Share code for cross-account access
         """
         base_url = os.environ.get("AGENTRUX_BASE_URL", "")
         script_id = os.environ.get("AGENTRUX_SCRIPT_ID", "")
-        secret = os.environ.get("AGENTRUX_SECRET", "")
+        client_secret = os.environ.get("AGENTRUX_CLIENT_SECRET", "")
 
         if not base_url:
             raise ValueError(
@@ -42,14 +42,14 @@ class MCPConfig:
             raise ValueError(
                 "AGENTRUX_SCRIPT_ID environment variable is required."
             )
-        if not secret:
+        if not client_secret:
             raise ValueError(
-                "AGENTRUX_SECRET environment variable is required."
+                "AGENTRUX_CLIENT_SECRET environment variable is required."
             )
 
         return cls(
             base_url=base_url.rstrip("/"),
             script_id=script_id,
-            secret=secret,
-            grant_token=os.environ.get("AGENTRUX_GRANT_TOKEN"),
+            client_secret=client_secret,
+            invite_code=os.environ.get("AGENTRUX_INVITE_CODE"),
         )

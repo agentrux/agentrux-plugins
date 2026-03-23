@@ -154,8 +154,8 @@ class AgenTruxToolkit:
         *,
         base_url: str | None = None,
         script_id: str | None = None,
-        secret: str | None = None,
-        grant_token: str | None = None,
+        client_secret: str | None = None,
+        invite_code: str | None = None,
     ) -> AgenTruxToolkit:
         """Create an authenticated toolkit.
 
@@ -163,38 +163,38 @@ class AgenTruxToolkit:
 
         - ``AGENTRUX_BASE_URL``
         - ``AGENTRUX_SCRIPT_ID``
-        - ``AGENTRUX_SECRET``
-        - ``AGENTRUX_GRANT_TOKEN`` (optional)
+        - ``AGENTRUX_CLIENT_SECRET``
+        - ``AGENTRUX_INVITE_CODE`` (optional)
         """
         base_url = base_url or os.environ.get("AGENTRUX_BASE_URL", "")
         script_id = script_id or os.environ.get("AGENTRUX_SCRIPT_ID", "")
-        secret = secret or os.environ.get("AGENTRUX_SECRET", "")
-        grant_token = grant_token or os.environ.get("AGENTRUX_GRANT_TOKEN")
+        client_secret = client_secret or os.environ.get("AGENTRUX_CLIENT_SECRET", "")
+        invite_code = invite_code or os.environ.get("AGENTRUX_INVITE_CODE")
 
         if not base_url:
             raise ValueError(
                 "base_url is required. Pass it directly or set AGENTRUX_BASE_URL."
             )
-        if not script_id or not secret:
+        if not script_id or not client_secret:
             raise ValueError(
-                "script_id and secret are required. Pass them directly or set "
-                "AGENTRUX_SCRIPT_ID / AGENTRUX_SECRET."
+                "script_id and client_secret are required. Pass them directly or set "
+                "AGENTRUX_SCRIPT_ID / AGENTRUX_CLIENT_SECRET."
             )
 
         # Create a temporary unauthenticated client for the auth endpoints
         temp_client = AgenTruxClient(base_url=base_url, token="")
 
-        # Redeem grant token if provided
-        if grant_token:
-            logger.info("Redeeming grant token for script %s", script_id)
+        # Redeem share code if provided
+        if invite_code:
+            logger.info("Redeeming share code for script %s", script_id)
             await temp_client.redeem_grant(
-                token=grant_token,
+                token=invite_code,
                 script_id=script_id,
-                secret=secret,
+                client_secret=client_secret,
             )
 
         # Obtain JWT
-        token_data = await temp_client.get_token(script_id, secret)
+        token_data = await temp_client.get_token(script_id, client_secret)
         await temp_client.close()
 
         client = AgenTruxClient(

@@ -40,26 +40,26 @@ n8n を再起動するとノードパネルに表示されます。
 
 ## Quick Start
 
-### 1. Credential 作成（Activation Token モード）
+### 1. Credential 作成（Activation Code モード）
 
 | Field | Value |
 |-------|-------|
 | Base URL | `https://your-agentrux-server.example.com` |
-| Auth Mode | **Activation Token (Initial Setup)** |
-| Activation Token | `atk_...`（コンソールで発行したトークン） |
+| Auth Mode | **Activation Code (Initial Setup)** |
+| Activation Code | `setup_...`（コンソールで発行したコード） |
 
 「Test Credential」で接続確認 → Save
 
 ### 2. ノードを1回実行
 
 AgenTrux ノードをキャンバスに配置して実行すると、**自動的に activate** されます。
-出力の1件目に `script_id` と `secret` が含まれます:
+出力の1件目に `script_id` と `client_secret` が含まれます:
 
 ```json
 {
   "_setup": "AUTO_ACTIVATED",
   "script_id": "abc-123-...",
-  "secret": "xxxxxxxxxxxxxxxx",
+  "client_secret": "xxxxxxxxxxxxxxxx",
   "grants": [...]
 }
 ```
@@ -70,8 +70,8 @@ AgenTrux ノードをキャンバスに配置して実行すると、**自動的
 |-------|-------|
 | Auth Mode | **Script Credentials** |
 | Script ID | 出力の `script_id` |
-| Secret | 出力の `secret` |
-| Grant Token | `gtk_...`（任意、初回自動 redeem） |
+| Client Secret | 出力の `client_secret` |
+| Invite Code | `share_...`（任意、初回自動 redeem） |
 
 以降はこの設定で動作し続けます。
 
@@ -93,7 +93,7 @@ AgenTrux ノードをキャンバスに配置して実行すると、**自動的
 
 | Operation | Description |
 |-----------|-------------|
-| Redeem Grant Token | `gtk_...` トークンを消費してクロスアカウントアクセスを取得 |
+| Redeem Invite Code | `share_...` コードを消費してクロスアカウントアクセスを取得 |
 
 ### AgenTrux Trigger
 
@@ -109,23 +109,23 @@ Webhook モードでは HMAC-SHA256 署名検証に対応しています。
 | Field | Mode | Required | Description |
 |-------|------|----------|-------------|
 | Base URL | 共通 | Yes | AgenTrux API サーバー URL |
-| Auth Mode | 共通 | Yes | `Activation Token` / `Script Credentials` |
-| Activation Token | Initial Setup | Yes | 初回 activate 用ワンタイムトークン |
+| Auth Mode | 共通 | Yes | `Activation Code` / `Script Credentials` |
+| Activation Code | Initial Setup | Yes | 初回 activate 用ワンタイムコード |
 | Script ID | Script Credentials | Yes | スクリプト UUID |
-| Secret | Script Credentials | Yes | スクリプトシークレット |
-| Grant Token | Script Credentials | No | クロスアカウント用（初回自動 redeem） |
+| Client Secret | Script Credentials | Yes | スクリプトAPIキー |
+| Invite Code | Script Credentials | No | クロスアカウント用（初回自動 redeem） |
 | Webhook Secret | 共通 | No | Webhook HMAC-SHA256 署名検証用 |
 
 ## Authentication Flow
 
 ```
-Activation Token mode            Script Credentials mode
+Activation Code mode                  Script Credentials mode
         │                                  │
         ▼                                  ▼
-  POST /auth/activate             (grant token あり?)
+  POST /auth/activate             (share code あり?)
         │                            │          │
         ▼                           Yes         No
-  script_id + secret 取得            │          │
+  script_id + client_secret 取得           │          │
   (キャッシュ + 出力)                ▼          │
         │                   POST /auth/redeem   │
         │                   -grant (1回だけ)     │
