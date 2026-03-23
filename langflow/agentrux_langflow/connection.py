@@ -28,7 +28,7 @@ class AgenTruxConnectionComponent(Component):
         MessageTextInput(
             name="base_url",
             display_name="Base URL",
-            info="AgenTrux server URL (e.g. https://api.example.com)",
+            info="AgenTrux server URL (e.g. https://api.agentrux.com)",
             required=True,
         ),
         MessageTextInput(

@@ -7,7 +7,7 @@ import {
 export class AgenTruxApi implements ICredentialType {
 	name = 'agenTruxApi';
 	displayName = 'AgenTrux API';
-	documentationUrl = 'https://github.com/your-org/AgenTrux';
+	documentationUrl = 'https://github.com/agentrux/agentrux';
 
 	properties: INodeProperties[] = [
 		{
@@ -15,7 +15,7 @@ export class AgenTruxApi implements ICredentialType {
 			name: 'baseUrl',
 			type: 'string',
 			default: 'http://localhost:8000',
-			placeholder: 'https://your-agentrux-server.example.com',
+			placeholder: 'https://api.agentrux.com',
 			description: 'Base URL of the AgenTrux API server (no trailing slash)',
 			required: true,
 		},

@@ -36,7 +36,7 @@ class MCPConfig:
         if not base_url:
             raise ValueError(
                 "AGENTRUX_BASE_URL environment variable is required. "
-                "Example: https://api.example.com"
+                "Example: https://api.agentrux.com"
             )
         if not script_id:
             raise ValueError(

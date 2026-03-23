@@ -18,7 +18,7 @@ class AgenTruxCredential implements INodeCredential {
                 name: 'baseUrl',
                 type: 'string',
                 default: 'http://localhost:8000',
-                placeholder: 'https://your-agentrux-server.example.com',
+                placeholder: 'https://api.agentrux.com',
                 description: 'Base URL of the AgenTrux API server (no trailing slash)',
             },
             {

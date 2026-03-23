@@ -22,7 +22,7 @@ uvx --from ./plugins/mcp agentrux-mcp
 
 | Variable | Required | Description |
 |---|---|---|
-| `AGENTRUX_BASE_URL` | Yes | Base URL of the AgenTrux server (e.g. `https://api.example.com`) |
+| `AGENTRUX_BASE_URL` | Yes | Base URL of the AgenTrux server (e.g. `https://api.agentrux.com`) |
 | `AGENTRUX_SCRIPT_ID` | Yes | Script ID for authentication |
 | `AGENTRUX_CLIENT_SECRET` | Yes | Client Secret for authentication |
 | `AGENTRUX_INVITE_CODE` | No | Invite code for cross-account topic access |
@@ -37,7 +37,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "agentrux": {
       "command": "agentrux-mcp",
       "env": {
-        "AGENTRUX_BASE_URL": "https://api.example.com",
+        "AGENTRUX_BASE_URL": "https://api.agentrux.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
         "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }
@@ -56,7 +56,7 @@ For `uvx`, use:
       "command": "uvx",
       "args": ["--from", "/path/to/AgenTrux/plugins/mcp", "agentrux-mcp"],
       "env": {
-        "AGENTRUX_BASE_URL": "https://api.example.com",
+        "AGENTRUX_BASE_URL": "https://api.agentrux.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
         "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }
@@ -75,7 +75,7 @@ Add to `.mcp.json` in the project root:
     "agentrux": {
       "command": "agentrux-mcp",
       "env": {
-        "AGENTRUX_BASE_URL": "https://api.example.com",
+        "AGENTRUX_BASE_URL": "https://api.agentrux.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
         "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }

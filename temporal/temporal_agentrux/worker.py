@@ -5,7 +5,7 @@ AgenTruxClient instance. The client is reused across all activity
 invocations within the worker process.
 
 Required environment variables:
-    AGENTRUX_BASE_URL  - AgenTrux server URL (e.g. https://api.example.com)
+    AGENTRUX_BASE_URL  - AgenTrux server URL (e.g. https://api.agentrux.com)
     AGENTRUX_SCRIPT_ID - Script ID for authentication
     AGENTRUX_SECRET    - Script secret for authentication
 

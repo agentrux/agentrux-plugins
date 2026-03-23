@@ -21,11 +21,8 @@ import * as http from "http";
 // Config & State
 // ---------------------------------------------------------------------------
 
-const CREDENTIALS_PATH = path.join(
-  process.env.HOME || "~",
-  ".agentrux",
-  "credentials.json",
-);
+const CREDENTIALS_DIR = ".agentrux";
+const CREDENTIALS_PATH = path.join(CREDENTIALS_DIR, "credentials.json");
 
 interface Credentials {
   base_url: string;
@@ -183,21 +180,21 @@ export default function (api: any) {
       parameters: {
         type: "object",
         properties: {
-          token: {
+          activation_code: {
             type: "string",
             description: "One-time activation code (ac_...)",
           },
           base_url: {
             type: "string",
-            description: "AgenTrux API URL (default: https://api.agentrux.example.com)",
+            description: "AgenTrux API URL (default: https://api.agentrux.com)",
           },
         },
-        required: ["token"],
+        required: ["activation_code"],
       },
-      async execute(_id: string, params: { token: string; base_url?: string }) {
-        const baseUrl = params.base_url || "https://api.agentrux.example.com";
+      async execute(_id: string, params: { activation_code: string; base_url?: string }) {
+        const baseUrl = params.base_url || "https://api.agentrux.com";
         const r = await httpJson("POST", `${baseUrl}/auth/activate`, {
-          token: params.token,
+          activation_code: params.activation_code,
         });
         if (r.status !== 200) {
           return { content: [{ type: "text", text: `Activation failed: ${JSON.stringify(r.data)}` }] };

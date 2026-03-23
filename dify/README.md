@@ -12,7 +12,7 @@ AgenTrux は Script API 用の OpenAPI spec を自動生成します。
 
 2. **OpenAPI Schema をインポート**
    ```
-   URL: https://your-agentrux-server.example.com/script/openapi.json
+   URL: https://api.agentrux.com/script/openapi.json
    ```
    「Import from URL」でスキーマを取得。
 

@@ -4,7 +4,7 @@
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
   "keywords": ["openclaw", "agentrux", "pubsub", "a2a", "agent"],
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/agentrux/agentrux-plugins", "directory": "plugins/openclaw" },
+  "repository": { "type": "git", "url": "https://github.com/your-org/AgenTrux", "directory": "plugins/openclaw" },
   "files": ["dist/", "package.json", "README.md"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

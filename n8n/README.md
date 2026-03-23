@@ -44,7 +44,7 @@ n8n を再起動するとノードパネルに表示されます。
 
 | Field | Value |
 |-------|-------|
-| Base URL | `https://your-agentrux-server.example.com` |
+| Base URL | `https://api.agentrux.com` |
 | Auth Mode | **Activation Code (Initial Setup)** |
 | Activation Code | `ac_...`（コンソールで発行したコード） |
 

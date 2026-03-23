@@ -30,12 +30,12 @@ from agentrux_agent_tools import AgenTruxToolkit
 
 async def main():
     toolkit = await AgenTruxToolkit.create(
-        base_url="https://api.example.com",
+        base_url="https://api.agentrux.com",
         script_id="your-script-id",
         client_secret="your-client-secret",
     )
     # Or use environment variables:
-    # export AGENTRUX_BASE_URL=https://api.example.com
+    # export AGENTRUX_BASE_URL=https://api.agentrux.com
     # export AGENTRUX_SCRIPT_ID=...
     # export AGENTRUX_CLIENT_SECRET=...
     # toolkit = await AgenTruxToolkit.create()
