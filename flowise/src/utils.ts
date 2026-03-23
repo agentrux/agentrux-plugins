@@ -74,7 +74,7 @@ async function redeemGrant(
     scriptId: string,
     clientSecret: string,
 ): Promise<void> {
-    const resp = await httpFetch(`${baseUrl}/auth/redeem-grant`, 'POST', {
+    const resp = await httpFetch(`${baseUrl}/auth/redeem-invite-code`, 'POST', {
         invite_code: inviteCode,
         script_id: scriptId,
         client_secret: clientSecret,

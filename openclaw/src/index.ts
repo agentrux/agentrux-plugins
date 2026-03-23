@@ -354,7 +354,7 @@ export default function (api: any) {
           credentials = loadCredentials();
           if (!credentials) throw new Error("Not connected. Use activate first.");
         }
-        const r = await httpJson("POST", `${credentials.base_url}/auth/redeem-grant`, {
+        const r = await httpJson("POST", `${credentials.base_url}/auth/redeem-invite-code`, {
           invite_code: params.invite_code,
           script_id: credentials.script_id,
           client_secret: credentials.clientSecret,

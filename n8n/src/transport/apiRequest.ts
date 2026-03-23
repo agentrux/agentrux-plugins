@@ -120,7 +120,7 @@ async function redeemGrantOnce(
 	const key = `${baseUrl}::${scriptId}::${inviteCode}`;
 	if (grantRedeemedKeys.has(key)) return;
 
-	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/redeem-grant`, {
+	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/redeem-invite-code`, {
 		invite_code: inviteCode,
 		script_id: scriptId,
 		client_secret: clientSecret,
