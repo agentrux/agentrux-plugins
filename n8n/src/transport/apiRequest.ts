@@ -18,14 +18,14 @@ export interface TokenState {
 
 export interface ActivationResult {
 	scriptId: string;
-	secret: string;
+	clientSecret: string;
 	grants: Array<{ grant_id: string; topic_id: string; action: string }>;
 }
 
 export interface ResolvedCredentials {
 	baseUrl: string;
 	scriptId: string;
-	secret: string;
+	clientSecret: string;
 }
 
 /** Minimal interface shared by IExecuteFunctions / IPollFunctions / IHookFunctions */
@@ -43,10 +43,10 @@ export interface HttpHelper {
 /** JWT cache: cacheKey → TokenState */
 const tokenCache: Map<string, TokenState> = new Map();
 
-/** Activation cache: "baseUrl::activationToken" → ActivationResult */
+/** Activation cache: "baseUrl::activationCode" → ActivationResult */
 const activationCache: Map<string, ActivationResult> = new Map();
 
-/** Set of cache keys where the grant token has already been redeemed */
+/** Set of cache keys where the invite code has already been redeemed */
 const grantRedeemedKeys: Set<string> = new Set();
 
 // ---------------------------------------------------------------------------
@@ -80,15 +80,15 @@ export async function rawHttp(
 export async function activateScript(
 	ctx: HttpHelper,
 	baseUrl: string,
-	activationToken: string,
+	activationCode: string,
 ): Promise<ActivationResult> {
 	// Return cached result if already activated in this process
-	const cacheKey = `${baseUrl}::${activationToken}`;
+	const cacheKey = `${baseUrl}::${activationCode}`;
 	const cached = activationCache.get(cacheKey);
 	if (cached) return cached;
 
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/activate`, {
-		token: activationToken,
+		token: activationCode,
 	});
 	if (resp.status >= 400) {
 		throw new NodeOperationError(
@@ -99,7 +99,7 @@ export async function activateScript(
 
 	const result: ActivationResult = {
 		scriptId: resp.body.script_id,
-		secret: resp.body.secret,
+		clientSecret: resp.body.client_secret,
 		grants: resp.body.grants ?? [],
 	};
 	activationCache.set(cacheKey, result);
@@ -113,17 +113,17 @@ export async function activateScript(
 async function redeemGrantOnce(
 	ctx: HttpHelper,
 	baseUrl: string,
-	grantToken: string,
+	inviteCode: string,
 	scriptId: string,
-	secret: string,
+	clientSecret: string,
 ): Promise<void> {
-	const key = `${baseUrl}::${scriptId}::${grantToken}`;
+	const key = `${baseUrl}::${scriptId}::${inviteCode}`;
 	if (grantRedeemedKeys.has(key)) return;
 
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/redeem-grant`, {
-		token: grantToken,
+		token: inviteCode,
 		script_id: scriptId,
-		secret,
+		clientSecret,
 	});
 	// 4xx is OK — grant may already be consumed
 	grantRedeemedKeys.add(key);
@@ -134,7 +134,7 @@ async function redeemGrantOnce(
 }
 
 // ---------------------------------------------------------------------------
-// Credential resolution (activation token → script credentials)
+// Credential resolution (activation code → script credentials)
 // ---------------------------------------------------------------------------
 
 export async function resolveCredentials(
@@ -144,32 +144,32 @@ export async function resolveCredentials(
 	const baseUrl = (credentials.baseUrl as string).replace(/\/+$/, '');
 	const authMode = credentials.authMode as string;
 
-	if (authMode === 'activationToken') {
-		const activationToken = credentials.activationToken as string;
-		if (!activationToken) {
+	if (authMode === 'activationCode') {
+		const activationCode = credentials.activationCode as string;
+		if (!activationCode) {
 			throw new NodeOperationError(ctx.getNode(), 'Activation token is required');
 		}
-		const result = await activateScript(ctx, baseUrl, activationToken);
+		const result = await activateScript(ctx, baseUrl, activationCode);
 		return {
-			resolved: { baseUrl, scriptId: result.scriptId, secret: result.secret },
+			resolved: { baseUrl, scriptId: result.scriptId, clientSecret: result.clientSecret },
 			activationResult: result,
 		};
 	}
 
 	// scriptCredentials mode
 	const scriptId = credentials.scriptId as string;
-	const secret = credentials.secret as string;
-	if (!scriptId || !secret) {
+	const clientSecret = credentials.clientSecret as string;
+	if (!scriptId || !clientSecret) {
 		throw new NodeOperationError(ctx.getNode(), 'Script ID and Secret are required');
 	}
 
-	// Auto-redeem grant token if provided
-	const grantToken = (credentials.grantToken as string) || '';
-	if (grantToken) {
-		await redeemGrantOnce(ctx, baseUrl, grantToken, scriptId, secret);
+	// Auto-redeem invite code if provided
+	const inviteCode = (credentials.inviteCode as string) || '';
+	if (inviteCode) {
+		await redeemGrantOnce(ctx, baseUrl, inviteCode, scriptId, clientSecret);
 	}
 
-	return { resolved: { baseUrl, scriptId, secret } };
+	return { resolved: { baseUrl, scriptId, clientSecret } };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,11 +180,11 @@ async function authenticate(
 	ctx: HttpHelper,
 	baseUrl: string,
 	scriptId: string,
-	secret: string,
+	clientSecret: string,
 ): Promise<TokenState> {
 	const resp = await rawHttp(ctx, 'POST', `${baseUrl}/auth/token`, {
 		script_id: scriptId,
-		secret,
+		clientSecret,
 	});
 	if (resp.status >= 400) {
 		throw new NodeOperationError(
@@ -237,7 +237,7 @@ export async function getValidToken(
 	}
 
 	// Full authentication
-	state = await authenticate(ctx, creds.baseUrl, creds.scriptId, creds.secret);
+	state = await authenticate(ctx, creds.baseUrl, creds.scriptId, creds.clientSecret);
 	tokenCache.set(cacheKey, state);
 	return state.accessToken;
 }

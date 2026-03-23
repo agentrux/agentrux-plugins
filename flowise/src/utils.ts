@@ -35,11 +35,11 @@ async function httpFetch(
 async function authenticate(
     baseUrl: string,
     scriptId: string,
-    secret: string,
+    clientSecret: string,
 ): Promise<TokenState> {
     const resp = await httpFetch(`${baseUrl}/auth/token`, 'POST', {
         script_id: scriptId,
-        secret,
+        clientSecret,
     });
     if (resp.status >= 400) {
         throw new Error(`AgenTrux authentication failed (${resp.status}): ${JSON.stringify(resp.data)}`);
@@ -70,14 +70,14 @@ async function refreshTokenRequest(
 
 async function redeemGrant(
     baseUrl: string,
-    grantToken: string,
+    inviteCode: string,
     scriptId: string,
-    secret: string,
+    clientSecret: string,
 ): Promise<void> {
     const resp = await httpFetch(`${baseUrl}/auth/redeem-grant`, 'POST', {
-        token: grantToken,
+        token: inviteCode,
         script_id: scriptId,
-        secret,
+        clientSecret,
     });
     if (resp.status >= 400) {
         throw new Error(`Grant redemption failed (${resp.status}): ${JSON.stringify(resp.data)}`);
@@ -90,8 +90,8 @@ async function redeemGrant(
 export async function getValidToken(
     baseUrl: string,
     scriptId: string,
-    secret: string,
-    grantToken?: string,
+    clientSecret: string,
+    inviteCode?: string,
 ): Promise<string> {
     const cacheKey = `${baseUrl}::${scriptId}`;
     let state = tokenCache.get(cacheKey);
@@ -110,17 +110,17 @@ export async function getValidToken(
         }
     }
 
-    // Redeem grant token if provided (first-time cross-account setup)
-    if (grantToken) {
+    // Redeem invite code if provided (first-time cross-account setup)
+    if (inviteCode) {
         try {
-            await redeemGrant(baseUrl, grantToken, scriptId, secret);
+            await redeemGrant(baseUrl, inviteCode, scriptId, clientSecret);
         } catch {
             // Grant may already be redeemed, continue to authenticate
         }
     }
 
     // Full authentication
-    state = await authenticate(baseUrl, scriptId, secret);
+    state = await authenticate(baseUrl, scriptId, clientSecret);
     tokenCache.set(cacheKey, state);
     return state.accessToken;
 }
@@ -131,13 +131,13 @@ export async function getValidToken(
 export async function authenticatedFetch(
     baseUrl: string,
     scriptId: string,
-    secret: string,
+    clientSecret: string,
     method: string,
     path: string,
     body?: unknown,
-    grantToken?: string,
+    inviteCode?: string,
 ): Promise<any> {
-    const token = await getValidToken(baseUrl, scriptId, secret, grantToken);
+    const token = await getValidToken(baseUrl, scriptId, clientSecret, inviteCode);
     const resp = await httpFetch(`${baseUrl}${path}`, method, body, {
         Authorization: `Bearer ${token}`,
     });
@@ -146,7 +146,7 @@ export async function authenticatedFetch(
     if (resp.status === 401) {
         const cacheKey = `${baseUrl}::${scriptId}`;
         tokenCache.delete(cacheKey);
-        const newToken = await getValidToken(baseUrl, scriptId, secret, grantToken);
+        const newToken = await getValidToken(baseUrl, scriptId, clientSecret, inviteCode);
         const retry = await httpFetch(`${baseUrl}${path}`, method, body, {
             Authorization: `Bearer ${newToken}`,
         });

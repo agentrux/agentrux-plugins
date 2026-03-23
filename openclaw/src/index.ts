@@ -2,11 +2,11 @@
  * AgenTrux plugin for OpenClaw — Agent-to-Agent authenticated Pub/Sub.
  *
  * Provides tools for:
- *   - activate: Exchange activation token for permanent credentials
+ *   - activate: Exchange activation code for permanent credentials
  *   - publish: Send events to a topic
  *   - read: Read events from a topic
  *   - send_message: Send a message to another agent (request-response pattern)
- *   - redeem_grant: Redeem a grant token for cross-account access
+ *   - redeem_grant: Redeem a invite code for cross-account access
  *
  * Credentials are persisted to ~/.agentrux/credentials.json (0600).
  * JWT is auto-refreshed before expiry.
@@ -30,7 +30,7 @@ const CREDENTIALS_PATH = path.join(
 interface Credentials {
   base_url: string;
   script_id: string;
-  secret: string;
+  clientSecret: string;
 }
 
 interface TokenState {
@@ -133,7 +133,7 @@ async function ensureToken(): Promise<string> {
   // Full auth
   const r = await httpJson("POST", `${credentials.base_url}/auth/token`, {
     script_id: credentials.script_id,
-    secret: credentials.secret,
+    clientSecret: credentials.clientSecret,
   });
   if (r.status !== 200) throw new Error(`Auth failed: ${JSON.stringify(r.data)}`);
   tokenState = {
@@ -177,15 +177,15 @@ export default function (api: any) {
     {
       name: "agentrux_activate",
       description:
-        "Connect to AgenTrux with a one-time activation token. " +
-        "Returns script_id, secret, and available topics. " +
+        "Connect to AgenTrux with a one-time activation code. " +
+        "Returns script_id, client_secret, and available topics. " +
         "Credentials are saved permanently for future sessions.",
       parameters: {
         type: "object",
         properties: {
           token: {
             type: "string",
-            description: "One-time activation token (atk_...)",
+            description: "One-time activation code (ac_...)",
           },
           base_url: {
             type: "string",
@@ -205,7 +205,7 @@ export default function (api: any) {
         saveCredentials({
           base_url: baseUrl,
           script_id: r.data.script_id,
-          secret: r.data.secret,
+          clientSecret: r.data.client_secret,
         });
         const grants = (r.data.grants || [])
           .map((g: any) => `  - ${g.topic_id} (${g.action})`)
@@ -343,12 +343,12 @@ export default function (api: any) {
     {
       name: "agentrux_redeem_grant",
       description:
-        "Redeem a grant token to gain access to another account's topic. " +
+        "Redeem a invite code to gain access to another account's topic. " +
         "After redemption, you can publish/read on the granted topic.",
       parameters: {
         type: "object",
         properties: {
-          token: { type: "string", description: "Grant token (gtk_...)" },
+          token: { type: "string", description: "Grant token (inv_...)" },
         },
         required: ["token"],
       },
@@ -360,7 +360,7 @@ export default function (api: any) {
         const r = await httpJson("POST", `${credentials.base_url}/auth/redeem-grant`, {
           token: params.token,
           script_id: credentials.script_id,
-          secret: credentials.secret,
+          clientSecret: credentials.clientSecret,
         });
         if (r.status >= 400) {
           return { content: [{ type: "text", text: `Grant redemption failed: ${JSON.stringify(r.data)}` }] };

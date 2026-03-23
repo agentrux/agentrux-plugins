@@ -57,9 +57,9 @@ export class AgenTrux implements INodeType {
 				displayOptions: { show: { resource: ['auth'] } },
 				options: [
 					{
-						name: 'Redeem Grant Token',
+						name: 'Redeem Invite Code',
 						value: 'redeemGrant',
-						description: 'Redeem a grant token for cross-account topic access',
+						description: 'Redeem a invite code for cross-account topic access',
 					},
 				],
 				default: 'redeemGrant',
@@ -82,17 +82,17 @@ export class AgenTrux implements INodeType {
 			},
 
 			// ================================================================
-			// Auth — Redeem Grant Token
+			// Auth — Redeem Invite Code
 			// ================================================================
 			{
-				displayName: 'Grant Token',
-				name: 'grantToken',
+				displayName: 'Invite Code',
+				name: 'inviteCode',
 				type: 'string',
 				typeOptions: { password: true },
 				default: '',
 				required: true,
 				displayOptions: { show: { resource: ['auth'], operation: ['redeemGrant'] } },
-				placeholder: 'gtk_...',
+				placeholder: 'inv_...',
 				description: 'Grant token shared by the topic owner',
 			},
 
@@ -262,11 +262,11 @@ export class AgenTrux implements INodeType {
 				// ── Auth operations ──
 				if (resource === 'auth') {
 					if (operation === 'redeemGrant') {
-						const grantToken = this.getNodeParameter('grantToken', i) as string;
+						const inviteCode = this.getNodeParameter('inviteCode', i) as string;
 						const resp = await rawHttp(this, 'POST', `${creds.baseUrl}/auth/redeem-grant`, {
-							token: grantToken,
+							token: inviteCode,
 							script_id: creds.scriptId,
-							secret: creds.secret,
+							clientSecret: creds.clientSecret,
 						});
 						if (resp.status >= 400) {
 							throw new NodeOperationError(
@@ -402,7 +402,7 @@ export class AgenTrux implements INodeType {
 					_message:
 						'Script activated successfully! Switch your credential to "Script Credentials" mode and enter the values below.',
 					script_id: activationResult.scriptId,
-					secret: activationResult.secret,
+					clientSecret: activationResult.clientSecret,
 					grants: activationResult.grants,
 				},
 			};

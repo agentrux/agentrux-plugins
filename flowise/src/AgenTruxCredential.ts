@@ -30,18 +30,18 @@ class AgenTruxCredential implements INodeCredential {
             },
             {
                 label: 'Secret',
-                name: 'secret',
+                name: 'clientSecret',
                 type: 'password',
                 default: '',
                 description: 'Secret for the script (from activation or rotation)',
             },
             {
-                label: 'Grant Token',
-                name: 'grantToken',
+                label: 'Invite Code',
+                name: 'inviteCode',
                 type: 'password',
                 default: '',
                 optional: true,
-                description: 'Optional grant token to redeem cross-account access before first use',
+                description: 'Optional invite code to redeem cross-account access before first use',
             },
         ];
     }

@@ -64,8 +64,8 @@ class AgenTruxPublish implements INode {
 
         const baseUrl = (credentialData.baseUrl as string).replace(/\/+$/, '');
         const scriptId = credentialData.scriptId as string;
-        const secret = credentialData.secret as string;
-        const grantToken = (credentialData.grantToken as string) || undefined;
+        const clientSecret = credentialData.clientSecret as string;
+        const inviteCode = (credentialData.inviteCode as string) || undefined;
 
         const topicId = inputParams.topicId as string;
         const eventType = inputParams.eventType as string;
@@ -92,16 +92,16 @@ class AgenTruxPublish implements INode {
             throw new Error('Topic ID and Event Type are required');
         }
 
-        const token = await getValidToken(baseUrl, scriptId, secret, grantToken);
+        const token = await getValidToken(baseUrl, scriptId, clientSecret, inviteCode);
 
         const result = await authenticatedFetch(
             baseUrl,
             scriptId,
-            secret,
+            clientSecret,
             'POST',
             `/topics/${topicId}/events`,
             { type: eventType, payload },
-            grantToken,
+            inviteCode,
         );
 
         // Return event_id as string (Flowise nodes return string)

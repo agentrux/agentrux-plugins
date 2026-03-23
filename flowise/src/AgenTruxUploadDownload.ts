@@ -79,8 +79,8 @@ class AgenTruxUploadDownload implements INode {
 
         const baseUrl = (credentialData.baseUrl as string).replace(/\/+$/, '');
         const scriptId = credentialData.scriptId as string;
-        const secret = credentialData.secret as string;
-        const grantToken = (credentialData.grantToken as string) || undefined;
+        const clientSecret = credentialData.clientSecret as string;
+        const inviteCode = (credentialData.inviteCode as string) || undefined;
 
         const operation = inputParams.operation as string;
         const topicId = inputParams.topicId as string;
@@ -101,11 +101,11 @@ class AgenTruxUploadDownload implements INode {
             const createResult = await authenticatedFetch(
                 baseUrl,
                 scriptId,
-                secret,
+                clientSecret,
                 'POST',
                 `/topics/${topicId}/payloads`,
                 { content_type: contentType },
-                grantToken,
+                inviteCode,
             );
 
             const uploadUrl: string = createResult.upload_url;
@@ -142,11 +142,11 @@ class AgenTruxUploadDownload implements INode {
             const result = await authenticatedFetch(
                 baseUrl,
                 scriptId,
-                secret,
+                clientSecret,
                 'GET',
                 `/topics/${topicId}/payloads/${objectId}`,
                 undefined,
-                grantToken,
+                inviteCode,
             );
 
             const downloadUrl: string = result.download_url;

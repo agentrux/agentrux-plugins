@@ -50,8 +50,8 @@ class AgenTruxGetEvent implements INode {
 
         const baseUrl = (credentialData.baseUrl as string).replace(/\/+$/, '');
         const scriptId = credentialData.scriptId as string;
-        const secret = credentialData.secret as string;
-        const grantToken = (credentialData.grantToken as string) || undefined;
+        const clientSecret = credentialData.clientSecret as string;
+        const inviteCode = (credentialData.inviteCode as string) || undefined;
 
         const topicId = inputParams.topicId as string;
         const eventId = inputParams.eventId as string;
@@ -63,11 +63,11 @@ class AgenTruxGetEvent implements INode {
         const result = await authenticatedFetch(
             baseUrl,
             scriptId,
-            secret,
+            clientSecret,
             'GET',
             `/topics/${topicId}/events/${eventId}`,
             undefined,
-            grantToken,
+            inviteCode,
         );
 
         // Return single event object as JSON string

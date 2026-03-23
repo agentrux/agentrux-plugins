@@ -25,30 +25,30 @@ export class AgenTruxApi implements ICredentialType {
 			type: 'options',
 			options: [
 				{
-					name: 'Activation Token (Initial Setup)',
-					value: 'activationToken',
-					description: 'Use an activation token for first-time setup — credentials will be returned on first use',
+					name: 'Activation Code (Initial Setup)',
+					value: 'activationCode',
+					description: 'Use an activation code for first-time setup — credentials will be returned on first use',
 				},
 				{
 					name: 'Script Credentials',
 					value: 'scriptCredentials',
-					description: 'Use script_id + secret obtained from activation',
+					description: 'Use script_id + client_secret obtained from activation',
 				},
 			],
-			default: 'activationToken',
+			default: 'activationCode',
 		},
 
-		// ── Activation Token mode ──
+		// ── Activation Code mode ──
 		{
-			displayName: 'Activation Token',
-			name: 'activationToken',
+			displayName: 'Activation Code',
+			name: 'activationCode',
 			type: 'string',
 			typeOptions: { password: true },
 			default: '',
 			required: true,
-			displayOptions: { show: { authMode: ['activationToken'] } },
-			placeholder: 'atk_...',
-			description: 'One-time activation token issued from the AgenTrux console',
+			displayOptions: { show: { authMode: ['activationCode'] } },
+			placeholder: 'ac_...',
+			description: 'One-time activation code issued from the AgenTrux console',
 		},
 
 		// ── Script Credentials mode ──
@@ -64,25 +64,25 @@ export class AgenTruxApi implements ICredentialType {
 		},
 		{
 			displayName: 'Secret',
-			name: 'secret',
+			name: 'clientSecret',
 			type: 'string',
 			typeOptions: { password: true },
 			default: '',
 			required: true,
 			displayOptions: { show: { authMode: ['scriptCredentials'] } },
-			description: 'Script secret (from activation response)',
+			description: 'Client Secret (from activation response)',
 		},
 
-		// ── Optional: Grant Token (auto-redeemed on first use) ──
+		// ── Optional: Invite Code (auto-redeemed on first use) ──
 		{
-			displayName: 'Grant Token (Optional)',
-			name: 'grantToken',
+			displayName: 'Invite Code (Optional)',
+			name: 'inviteCode',
 			type: 'string',
 			typeOptions: { password: true },
 			default: '',
 			displayOptions: { show: { authMode: ['scriptCredentials'] } },
-			placeholder: 'gtk_...',
-			description: 'Optional grant token — automatically redeemed on first use for cross-account access',
+			placeholder: 'inv_...',
+			description: 'Optional invite code — automatically redeemed on first use for cross-account access',
 		},
 
 		// ── Optional: Webhook Secret ──
