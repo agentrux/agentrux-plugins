@@ -2,10 +2,24 @@
   "name": "@agentrux/openclaw-plugin",
   "version": "0.1.0",
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
-  "keywords": ["openclaw", "agentrux", "pubsub", "a2a", "agent"],
+  "keywords": [
+    "openclaw",
+    "agentrux",
+    "pubsub",
+    "a2a",
+    "agent"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/your-org/AgenTrux", "directory": "plugins/openclaw" },
-  "files": ["dist/", "package.json", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/AgenTrux",
+    "directory": "plugins/openclaw"
+  },
+  "files": [
+    "dist/",
+    "package.json",
+    "README.md"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -14,16 +28,18 @@
     "test": "jest"
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"],
+    "extensions": [
+      "./dist/index.js"
+    ],
     "install": {
       "npmSpec": "@agentrux/openclaw-plugin"
     }
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@types/jest": "^29.5.14",
     "@types/node": "^20.0.0",
     "jest": "^29.7.0",
-    "ts-jest": "^29.1.0",
-    "@types/jest": "^29.5.0"
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.4.0"
   }
 }

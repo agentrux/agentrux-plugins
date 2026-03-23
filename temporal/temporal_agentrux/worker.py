@@ -7,7 +7,7 @@ invocations within the worker process.
 Required environment variables:
     AGENTRUX_BASE_URL  - AgenTrux server URL (e.g. https://api.agentrux.com)
     AGENTRUX_SCRIPT_ID - Script ID for authentication
-    AGENTRUX_SECRET    - Script secret for authentication
+    AGENTRUX_CLIENT_SECRET    - Script secret for authentication
 
 Optional environment variables:
     AGENTRUX_TIMEOUT_S - HTTP timeout in seconds (default: 30)
@@ -49,7 +49,7 @@ async def init_client() -> AgenTruxClient:
     """Initialize the shared AgenTruxClient from environment variables.
 
     Reads AGENTRUX_BASE_URL, AGENTRUX_SCRIPT_ID, and
-    AGENTRUX_SECRET from the environment, obtains a JWT token,
+    AGENTRUX_CLIENT_SECRET from the environment, obtains a JWT token,
     and creates a reusable client instance.
 
     Returns:
@@ -63,7 +63,7 @@ async def init_client() -> AgenTruxClient:
 
     base_url = os.environ.get("AGENTRUX_BASE_URL")
     script_id = os.environ.get("AGENTRUX_SCRIPT_ID")
-    secret = os.environ.get("AGENTRUX_SECRET")
+    secret = os.environ.get("AGENTRUX_CLIENT_SECRET")
     timeout_s = float(os.environ.get("AGENTRUX_TIMEOUT_S", "30"))
 
     missing = []
@@ -72,7 +72,7 @@ async def init_client() -> AgenTruxClient:
     if not script_id:
         missing.append("AGENTRUX_SCRIPT_ID")
     if not secret:
-        missing.append("AGENTRUX_SECRET")
+        missing.append("AGENTRUX_CLIENT_SECRET")
 
     if missing:
         raise RuntimeError(
