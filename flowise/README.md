@@ -1,6 +1,6 @@
 # flowise-node-agentrux
 
-Flowise custom nodes for [AgenTrux](https://github.com/your-org/AgenTrux) - A2A authenticated ephemeral data pipe service.
+Flowise custom nodes for [AgenTrux](https://github.com/agentrux/agentrux) - A2A authenticated ephemeral data pipe service.
 
 **Status: Beta (0.1.0-beta.1)**
 

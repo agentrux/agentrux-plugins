@@ -1,6 +1,6 @@
 # n8n-nodes-agentrux
 
-n8n community node for [AgenTrux](https://github.com/your-org/AgenTrux) — A2A authenticated ephemeral data pipe service.
+n8n community node for [AgenTrux](https://github.com/agentrux/agentrux) — A2A authenticated ephemeral data pipe service.
 
 ## Installation
 
@@ -71,7 +71,7 @@ AgenTrux ノードをキャンバスに配置して実行すると、**自動的
 | Auth Mode | **Script Credentials** |
 | Script ID | 出力の `script_id` |
 | Client Secret | 出力の `client_secret` |
-| Invite Code | `share_...`（任意、初回自動 redeem） |
+| Invite Code | `inv_...`（任意、初回自動 redeem） |
 
 以降はこの設定で動作し続けます。
 
@@ -93,7 +93,7 @@ AgenTrux ノードをキャンバスに配置して実行すると、**自動的
 
 | Operation | Description |
 |-----------|-------------|
-| Redeem Invite Code | `share_...` コードを消費してクロスアカウントアクセスを取得 |
+| Redeem Invite Code | `inv_...` コードを消費してクロスアカウントアクセスを取得 |
 
 ### AgenTrux Trigger
 

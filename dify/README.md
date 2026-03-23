@@ -33,7 +33,7 @@ AgenTrux は Script API 用の OpenAPI spec を自動生成します。
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | /auth/activate | Activation token → credentials |
+| POST | /auth/activate | Activation code → credentials |
 | POST | /auth/token | Get JWT |
 | POST | /auth/refresh | Refresh JWT |
 | POST | /auth/redeem-grant | Redeem invite code |

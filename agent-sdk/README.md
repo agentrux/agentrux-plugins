@@ -3,7 +3,7 @@
 > **Beta** -- API may change before 1.0.
 
 Framework-agnostic AI agent toolkit for
-[AgenTrux](https://github.com/your-org/AgenTrux).  Exposes
+[AgenTrux](https://github.com/agentrux/agentrux).  Exposes
 publish/subscribe/read operations as tool definitions compatible with OpenAI
 function calling, Anthropic tool_use, and any other LLM framework.
 

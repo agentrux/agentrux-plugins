@@ -25,7 +25,7 @@ uvx --from ./plugins/mcp agentrux-mcp
 | `AGENTRUX_BASE_URL` | Yes | Base URL of the AgenTrux server (e.g. `https://api.example.com`) |
 | `AGENTRUX_SCRIPT_ID` | Yes | Script ID for authentication |
 | `AGENTRUX_CLIENT_SECRET` | Yes | Client Secret for authentication |
-| `AGENTRUX_INVITE_CODE` | No | Grant token for cross-account topic access |
+| `AGENTRUX_INVITE_CODE` | No | Invite code for cross-account topic access |
 
 ## Claude Desktop Configuration
 

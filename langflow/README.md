@@ -2,7 +2,7 @@
 
 > **Beta** -- API may change before 1.0.
 
-Langflow components for [AgenTrux](https://github.com/your-org/AgenTrux),
+Langflow components for [AgenTrux](https://github.com/agentrux/agentrux),
 the A2A-authenticated short-lived data pipe service.
 
 ## Installation
