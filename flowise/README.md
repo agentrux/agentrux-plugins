@@ -52,8 +52,8 @@ Configure the AgenTrux API credential with:
 |-------|----------|-------------|
 | Base URL | Yes | AgenTrux server URL (e.g., `https://api.example.com`) |
 | Script ID | Yes | UUID of the script to authenticate as |
-| Secret | Yes | Script secret |
-| Grant Token | No | Cross-account grant token (redeemed on first use) |
+| Client Secret | Yes | Client Secret |
+| Invite Code | No | Cross-account invite code (redeemed on first use) |
 
 ## Authentication
 

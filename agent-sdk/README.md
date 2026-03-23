@@ -32,12 +32,12 @@ async def main():
     toolkit = await AgenTruxToolkit.create(
         base_url="https://api.example.com",
         script_id="your-script-id",
-        secret="your-secret",
+        client_secret="your-client-secret",
     )
     # Or use environment variables:
     # export AGENTRUX_BASE_URL=https://api.example.com
     # export AGENTRUX_SCRIPT_ID=...
-    # export AGENTRUX_SECRET=...
+    # export AGENTRUX_CLIENT_SECRET=...
     # toolkit = await AgenTruxToolkit.create()
 ```
 
@@ -158,5 +158,5 @@ async def generic_agent(llm_call, user_prompt: str):
 |----------|-------------|
 | `AGENTRUX_BASE_URL` | Server URL |
 | `AGENTRUX_SCRIPT_ID` | Script identifier |
-| `AGENTRUX_SECRET` | Script secret |
-| `AGENTRUX_INVITE_CODE` | Optional grant token for cross-account access |
+| `AGENTRUX_CLIENT_SECRET` | Client Secret |
+| `AGENTRUX_INVITE_CODE` | Optional invite code for cross-account access |

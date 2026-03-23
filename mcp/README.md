@@ -24,7 +24,7 @@ uvx --from ./plugins/mcp agentrux-mcp
 |---|---|---|
 | `AGENTRUX_BASE_URL` | Yes | Base URL of the AgenTrux server (e.g. `https://api.example.com`) |
 | `AGENTRUX_SCRIPT_ID` | Yes | Script ID for authentication |
-| `AGENTRUX_SECRET` | Yes | Script secret for authentication |
+| `AGENTRUX_CLIENT_SECRET` | Yes | Client Secret for authentication |
 | `AGENTRUX_INVITE_CODE` | No | Grant token for cross-account topic access |
 
 ## Claude Desktop Configuration
@@ -39,7 +39,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "env": {
         "AGENTRUX_BASE_URL": "https://api.example.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
-        "AGENTRUX_SECRET": "your-secret"
+        "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }
     }
   }
@@ -58,7 +58,7 @@ For `uvx`, use:
       "env": {
         "AGENTRUX_BASE_URL": "https://api.example.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
-        "AGENTRUX_SECRET": "your-secret"
+        "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }
     }
   }
@@ -77,7 +77,7 @@ Add to `.mcp.json` in the project root:
       "env": {
         "AGENTRUX_BASE_URL": "https://api.example.com",
         "AGENTRUX_SCRIPT_ID": "your-script-id",
-        "AGENTRUX_SECRET": "your-secret"
+        "AGENTRUX_CLIENT_SECRET": "your-client-secret"
       }
     }
   }
@@ -170,4 +170,4 @@ AgenTrux API Server
     +-> PostgreSQL (metadata)
 ```
 
-The MCP server authenticates on first tool/resource call using `AGENTRUX_SCRIPT_ID` and `AGENTRUX_SECRET` to obtain a JWT. Token refresh is handled automatically by the SDK.
+The MCP server authenticates on first tool/resource call using `AGENTRUX_SCRIPT_ID` and `AGENTRUX_CLIENT_SECRET` to obtain a JWT. Token refresh is handled automatically by the SDK.

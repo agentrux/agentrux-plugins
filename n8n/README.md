@@ -46,7 +46,7 @@ n8n を再起動するとノードパネルに表示されます。
 |-------|-------|
 | Base URL | `https://your-agentrux-server.example.com` |
 | Auth Mode | **Activation Code (Initial Setup)** |
-| Activation Code | `setup_...`（コンソールで発行したコード） |
+| Activation Code | `ac_...`（コンソールで発行したコード） |
 
 「Test Credential」で接続確認 → Save
 
@@ -112,7 +112,7 @@ Webhook モードでは HMAC-SHA256 署名検証に対応しています。
 | Auth Mode | 共通 | Yes | `Activation Code` / `Script Credentials` |
 | Activation Code | Initial Setup | Yes | 初回 activate 用ワンタイムコード |
 | Script ID | Script Credentials | Yes | スクリプト UUID |
-| Client Secret | Script Credentials | Yes | スクリプトAPIキー |
+| Client Secret | Script Credentials | Yes | スクリプトClient Secret |
 | Invite Code | Script Credentials | No | クロスアカウント用（初回自動 redeem） |
 | Webhook Secret | 共通 | No | Webhook HMAC-SHA256 署名検証用 |
 
@@ -122,7 +122,7 @@ Webhook モードでは HMAC-SHA256 署名検証に対応しています。
 Activation Code mode                  Script Credentials mode
         │                                  │
         ▼                                  ▼
-  POST /auth/activate             (share code あり?)
+  POST /auth/activate             (invite code あり?)
         │                            │          │
         ▼                           Yes         No
   script_id + client_secret 取得           │          │

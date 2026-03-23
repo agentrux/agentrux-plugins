@@ -11,7 +11,7 @@ openclaw plugins install @agentrux/openclaw-plugin
 ## Setup
 
 ```
-OpenClaw> AgenTrux に接続して。token は atk_Abc123...
+OpenClaw> AgenTrux に接続して。token は ac_Abc123...
 
   🔑 Activating...
   ✅ Connected! Credentials saved.
@@ -21,11 +21,11 @@ OpenClaw> AgenTrux に接続して。token は atk_Abc123...
 
 | Tool | Description |
 |------|-------------|
-| `agentrux_activate` | Connect with a one-time activation token |
+| `agentrux_activate` | Connect with a one-time activation code |
 | `agentrux_publish` | Send an event to a topic |
 | `agentrux_read` | Read events from a topic |
 | `agentrux_send_message` | Send a message and wait for reply |
-| `agentrux_redeem_grant` | Redeem a grant token for cross-account access |
+| `agentrux_redeem_grant` | Redeem a invite code for cross-account access |
 
 ## Usage Examples
 
@@ -53,8 +53,8 @@ OpenClaw> Bob に「明日の会議資料まとめて」と送って
 ### Cross-account access
 
 ```
-OpenClaw> この grant token を使って: gtk_xyz...
-→ agentrux_redeem_grant(token="inv_xyz...")
+OpenClaw> この invite code を使って: inv_xyz...
+→ agentrux_redeem_grant(invite_code="inv_xyz...")
 ```
 
 ## Configuration
@@ -86,7 +86,7 @@ Stored at `~/.agentrux/credentials.json` (permissions: 0600).
 
 | Credential | Lifetime | Storage |
 |---|---|---|
-| script_id + secret | Permanent | File |
+| script_id + client_secret | Permanent | File |
 | JWT (access_token) | 1 hour | Memory (auto-refresh) |
 | Refresh token | Single-use | Memory (auto-rotate) |
 

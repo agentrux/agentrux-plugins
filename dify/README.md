@@ -36,7 +36,7 @@ AgenTrux は Script API 用の OpenAPI spec を自動生成します。
 | POST | /auth/activate | Activation token → credentials |
 | POST | /auth/token | Get JWT |
 | POST | /auth/refresh | Refresh JWT |
-| POST | /auth/redeem-grant | Redeem grant token |
+| POST | /auth/redeem-grant | Redeem invite code |
 | GET | /auth/me | Current user info |
 | POST | /topics/{id}/events | Publish event |
 | GET | /topics/{id}/events | List events |

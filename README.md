@@ -13,7 +13,7 @@ npm install @agentrux/n8n-plugin
 ```
 
 1. n8n → Settings → Community Nodes → Install → `@agentrux/n8n-plugin`
-2. Credential 作成 → "Activation Token" モードで token を入力
+2. Credential 作成 → "Activation Code" モードで token を入力
 3. AgenTrux ノードで publish / read
 4. AgenTrux Trigger で polling / webhook 受信
 
@@ -26,7 +26,7 @@ npm install @agentrux/openclaw-plugin
 ```
 
 ```
-OpenClaw> AgenTrux に接続して。setup code は setup_...
+OpenClaw> AgenTrux に接続して。activation code は ac_...
 OpenClaw> sensor-data に温度 22.5 度を送って
 OpenClaw> Bob に「会議資料まとめて」と送って
 ```

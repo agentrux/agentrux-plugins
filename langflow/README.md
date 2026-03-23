@@ -22,7 +22,7 @@ pip install -e .
 
 | Component | Description |
 |-----------|-------------|
-| **AgenTrux Connection** | Authenticate with script_id + secret, optionally redeem a grant token. Produces a reusable client. |
+| **AgenTrux Connection** | Authenticate with script_id + client_secret, optionally redeem a invite code. Produces a reusable client. |
 | **AgenTrux Publish** | Publish a JSON event to a topic. |
 | **AgenTrux List Events** | List events from a topic with optional type filter. |
 | **AgenTrux Subscribe** | SSE subscription that collects events up to a max count or timeout. |
@@ -30,7 +30,7 @@ pip install -e .
 ## Quick Start
 
 1. Drag **AgenTrux Connection** onto the canvas.
-2. Fill in `base_url`, `script_id`, and `secret`.
+2. Fill in `base_url`, `script_id`, and `client_secret`.
 3. Connect its **Client** output to the **Connection** input of **Publish**,
    **List Events**, or **Subscribe**.
 4. Configure the downstream component (topic_id, event_type, payload, etc.).
@@ -43,5 +43,5 @@ Langflow's global variables:
 
 - `AGENTRUX_BASE_URL`
 - `AGENTRUX_SCRIPT_ID`
-- `AGENTRUX_SECRET`
+- `AGENTRUX_CLIENT_SECRET`
 - `AGENTRUX_INVITE_CODE` (optional)

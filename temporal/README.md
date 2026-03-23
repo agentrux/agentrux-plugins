@@ -16,7 +16,7 @@ pip install -e plugins/temporal
 |---|---|---|
 | `AGENTRUX_BASE_URL` | Yes | AgenTrux server URL |
 | `AGENTRUX_SCRIPT_ID` | Yes | Script ID for authentication |
-| `AGENTRUX_SECRET` | Yes | Script secret for authentication |
+| `AGENTRUX_CLIENT_SECRET` | Yes | Client Secret for authentication |
 | `AGENTRUX_TIMEOUT_S` | No | HTTP timeout in seconds (default: 30) |
 
 Secrets are read from environment variables at worker startup. They are never
