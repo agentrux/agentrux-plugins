@@ -188,7 +188,7 @@ class AgenTruxToolkit:
         if invite_code:
             logger.info("Redeeming share code for script %s", script_id)
             await temp_client.redeem_grant(
-                token=invite_code,
+                invite_code=invite_code,
                 script_id=script_id,
                 client_secret=client_secret,
             )
