@@ -1,6 +1,6 @@
 {
   "name": "flowise-node-agentrux",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Flowise custom node for AgenTrux - A2A authenticated ephemeral data pipe service",
   "keywords": [
     "flowise",
@@ -11,6 +11,11 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/__tests__",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
