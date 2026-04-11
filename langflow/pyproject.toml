@@ -11,7 +11,7 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "langflow>=1.0",
-    "agentrux>=0.1.0",
+    "agentrux-sdk>=0.1.0b1",
 ]
 
 [project.optional-dependencies]

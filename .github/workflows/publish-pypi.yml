@@ -1,6 +1,7 @@
 # Publish Python plugins to PyPI on tag push.
 #
 # Tag format: <plugin>-v<version>
+#   sdk-v0.1.0b1
 #   agent-sdk-v0.1.0b1
 #   mcp-v0.1.0b1
 #   langflow-v0.1.0b1
@@ -13,6 +14,7 @@ name: Publish to PyPI
 on:
   push:
     tags:
+      - 'sdk-v*'
       - 'agent-sdk-v*'
       - 'mcp-v*'
       - 'langflow-v*'
