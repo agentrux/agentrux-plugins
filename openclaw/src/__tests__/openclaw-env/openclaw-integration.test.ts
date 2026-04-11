@@ -182,7 +182,7 @@ describeIfConfigured("OpenClaw environment integration", () => {
     // Upload a test file
     const uploadR = await httpJson(
       "POST",
-      `${BASE_URL}/topics/${COMMAND_TOPIC}/payloads`,
+      `${BASE_URL}/topics/${COMMAND_TOPIC}/payload`,
       { content_type: "text/plain", filename: "test.txt", size: 13 },
       { Authorization: `Bearer ${token}` },
     );
