@@ -207,7 +207,7 @@ class TestEnvVarNaming:
 
         # Verify invite code flow was triggered (proves AGENTRUX_INVITE_CODE was read)
         mock_instance.redeem_grant.assert_called_once_with(
-            token="invite-xyz",
+            invite_code="invite-xyz",
             script_id="script-123",
             client_secret="secret-abc",
         )

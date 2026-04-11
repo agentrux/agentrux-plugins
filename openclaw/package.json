@@ -1,6 +1,6 @@
 {
-  "name": "@agentrux/openclaw-plugin",
-  "version": "0.1.0",
+  "name": "@agentrux/agentrux-openclaw-plugin",
+  "version": "0.14.5",
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
   "keywords": [
     "openclaw",
@@ -13,32 +13,35 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/your-org/AgenTrux",
-    "directory": "plugins/openclaw"
+    "directory": "plugins/agentrux-openclaw-plugin"
   },
   "files": [
     "dist/",
     "package.json",
-    "README.md"
+    "README.md",
+    "openclaw.plugin.json"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "jest"
+    "test": "jest --testPathIgnorePatterns='openclaw-env'",
+    "test:openclaw": "jest --testPathPattern='openclaw-env'"
   },
   "openclaw": {
     "extensions": [
       "./dist/index.js"
     ],
     "install": {
-      "npmSpec": "@agentrux/openclaw-plugin"
+      "npmSpec": "@agentrux/agentrux-openclaw-plugin"
     }
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/node": "^20.0.0",
     "jest": "^29.7.0",
+    "openclaw": "^2026.3.28",
     "ts-jest": "^29.4.6",
     "typescript": "^5.4.0"
   }

@@ -159,4 +159,4 @@ async def generic_agent(llm_call, user_prompt: str):
 | `AGENTRUX_BASE_URL` | Server URL |
 | `AGENTRUX_SCRIPT_ID` | Script identifier |
 | `AGENTRUX_CLIENT_SECRET` | Client Secret |
-| `AGENTRUX_INVITE_CODE` | Optional invite code for cross-account access |
+| `AGENTRUX_INVITE_CODE` | Optional invite code for cross-Domo (cross-account) access |

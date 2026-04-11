@@ -1,0 +1,56 @@
+# Publish Python plugins to PyPI on tag push.
+#
+# Tag format: <plugin>-v<version>
+#   agent-sdk-v0.1.0b1
+#   mcp-v0.1.0b1
+#   langflow-v0.1.0b1
+#   temporal-v0.1.0b1
+#
+# Requires secret: PYPI_API_TOKEN
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'agent-sdk-v*'
+      - 'mcp-v*'
+      - 'langflow-v*'
+      - 'temporal-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine plugin from tag
+        id: meta
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PLUGIN="${TAG%-v*}"
+          VERSION="${TAG#*-v}"
+          echo "plugin=$PLUGIN" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PLUGIN v$VERSION"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build package
+        working-directory: ${{ steps.meta.outputs.plugin }}
+        run: python -m build
+
+      - name: Publish to PyPI
+        working-directory: ${{ steps.meta.outputs.plugin }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*

@@ -53,7 +53,7 @@ Configure the AgenTrux API credential with:
 | Base URL | Yes | AgenTrux server URL (e.g., `https://api.agentrux.com`) |
 | Script ID | Yes | UUID of the script to authenticate as |
 | Client Secret | Yes | Client Secret |
-| Invite Code | No | Cross-account invite code (redeemed on first use) |
+| Invite Code | No | Cross-Domo (cross-account) invite code (redeemed on first use) |
 
 ## Authentication
 

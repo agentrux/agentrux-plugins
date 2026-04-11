@@ -93,7 +93,7 @@ AgenTrux ノードをキャンバスに配置して実行すると、**自動的
 
 | Operation | Description |
 |-----------|-------------|
-| Redeem Invite Code | `inv_...` コードを消費してクロスアカウントアクセスを取得 |
+| Redeem Invite Code | `inv_...` コードを消費してクロスDomo（クロスアカウント）アクセスを取得 |
 
 ### AgenTrux Trigger
 
@@ -113,7 +113,7 @@ Webhook モードでは HMAC-SHA256 署名検証に対応しています。
 | Activation Code | Initial Setup | Yes | 初回 activate 用ワンタイムコード |
 | Script ID | Script Credentials | Yes | スクリプト UUID |
 | Client Secret | Script Credentials | Yes | スクリプトClient Secret |
-| Invite Code | Script Credentials | No | クロスアカウント用（初回自動 redeem） |
+| Invite Code | Script Credentials | No | クロスDomo（クロスアカウント）用（初回自動 redeem） |
 | Webhook Secret | 共通 | No | Webhook HMAC-SHA256 署名検証用 |
 
 ## Authentication Flow

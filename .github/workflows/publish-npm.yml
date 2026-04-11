@@ -1,0 +1,55 @@
+# Publish Node.js plugins to npm on tag push.
+#
+# Tag format: <plugin>-v<version>
+#   flowise-v0.1.0-beta.1
+#   n8n-v0.2.0
+#   openclaw-v0.14.5
+#
+# Requires secret: NPM_TOKEN
+
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'flowise-v*'
+      - 'n8n-v*'
+      - 'openclaw-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine plugin from tag
+        id: meta
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PLUGIN="${TAG%-v*}"
+          VERSION="${TAG#*-v}"
+          echo "plugin=$PLUGIN" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PLUGIN v$VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: ${{ steps.meta.outputs.plugin }}
+        run: npm ci
+
+      - name: Build
+        working-directory: ${{ steps.meta.outputs.plugin }}
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: ${{ steps.meta.outputs.plugin }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

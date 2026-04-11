@@ -1,89 +1,61 @@
-# AgenTrux Plugins (Experimental)
+# AgenTrux Plugins
 
-AgenTrux を外部プラットフォームから使うためのガイド。
+AgenTrux を外部プラットフォームから使うためのプラグイン集。
 
-> **Status: Experimental** — API は変更される可能性があります。
+> **Status: Beta** — API は変更される可能性があります。
 
-**初めての方:** まず [セットアップガイド](/docs/setup) で Topic・Script・Grant の作成と Activation Code の発行を行ってください。
+**初めての方:** まず [セットアップガイド](https://app.agentrux.com/docs/setup) で Domo の作成、および Topic・Script・Grant の作成と Activation Code の発行を行ってください。
 
-## n8n
+## プラグイン一覧
 
-```bash
-npm install @agentrux/n8n-plugin
-```
-
-1. n8n → Settings → Community Nodes → Install → `@agentrux/n8n-plugin`
-2. Credential 作成 → "Activation Code" モードで token を入力
-3. AgenTrux ノードで publish / read
-4. AgenTrux Trigger で polling / webhook 受信
-
----
-
-## OpenClaw
-
-```bash
-npm install @agentrux/openclaw-plugin
-```
-
-```
-OpenClaw> AgenTrux に接続して。activation code は ac_...
-OpenClaw> sensor-data に温度 22.5 度を送って
-OpenClaw> Bob に「会議資料まとめて」と送って
-```
-
----
-
-## Dify
-
-OpenAPI spec をインポートするだけ。コード不要。
-
-1. Dify → Studio → Tools → Custom Tool → Create
-2. Import from URL:
-   ```
-   {{API_URL}}/script/openapi.json
-   ```
-3. Auth Type: Bearer Token → JWT を入力
-4. Agent に追加
-
-Console / Admin エンドポイントは含まれません。
-
----
-
-## Python SDK
-
-```bash
-pip install git+https://github.com/agentrux/agentrux.git
-```
-
-```python
-from agentrux.sdk.facade import AgenTruxClient
-
-client = await AgenTruxClient.bootstrap(
-    base_url="{{API_URL}}",
-    activation_code="ac_...",
-)
-
-await client.publish("topic-uuid", "hello.world", {"msg": "Hello!"})
-```
-
----
-
-## A2A Agent Card
-
-AI エージェント向け。カードを読むだけで AgenTrux を自律的に操作できます。
-
-```
-{{API_URL}}/.well-known/agent-card.json
-```
-
----
+| Plugin | Registry | Install | Status |
+|--------|----------|---------|--------|
+| [n8n](n8n/) | npm | `npm install @agentrux/n8n-plugin` | Published |
+| [OpenClaw](openclaw/) | npm | `npm install @agentrux/agentrux-openclaw-plugin` | Published |
+| [Flowise](flowise/) | npm | `npm install flowise-node-agentrux` | Beta |
+| [Agent SDK](agent-sdk/) | PyPI | `pip install agentrux-agent-tools` | Beta |
+| [MCP Server](mcp/) | PyPI | `pip install agentrux-mcp` | Beta |
+| [Langflow](langflow/) | PyPI | `pip install langflow-agentrux` | Beta |
+| [Temporal](temporal/) | PyPI | `pip install temporal-agentrux` | Beta |
+| [Dify](dify/) | Marketplace | Dify Marketplace で "AgenTrux" を検索 | Beta |
 
 ## 認証フロー（共通）
+
+全プラグインで共通の認証手順:
 
 ```
 Activation Code → POST /auth/activate → script_id + client_secret
 script_id + client_secret → POST /auth/token → JWT
 JWT → Authorization: Bearer で API 呼び出し
+```
+
+## リリース
+
+タグをプッシュすると GitHub Actions が自動で公開します。
+
+```bash
+# Python plugin (PyPI)
+git tag agent-sdk-v0.1.0b1 && git push origin agent-sdk-v0.1.0b1
+
+# Node.js plugin (npm)
+git tag flowise-v0.1.0-beta.1 && git push origin flowise-v0.1.0-beta.1
+```
+
+タグ形式: `<plugin>-v<version>`
+
+## 開発
+
+```bash
+# Python plugin
+cd agent-sdk
+pip install -e .
+pytest
+
+# Node.js plugin
+cd flowise
+npm install
+npm run build
+npm test
 ```
 
 ## ライセンス

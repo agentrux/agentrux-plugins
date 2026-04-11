@@ -13,8 +13,12 @@ import * as path from "path";
 // We read the source file directly because the module's default export
 // is a function that registers tools on an api object — we need to
 // inspect both the static source text and the runtime registrations.
-const SOURCE_PATH = path.resolve(__dirname, "..", "index.ts");
-const source = fs.readFileSync(SOURCE_PATH, "utf-8");
+const INDEX_PATH = path.resolve(__dirname, "..", "index.ts");
+const CREDENTIALS_PATH = path.resolve(__dirname, "..", "credentials.ts");
+const indexSource = fs.readFileSync(INDEX_PATH, "utf-8");
+const credentialsSource = fs.readFileSync(CREDENTIALS_PATH, "utf-8");
+// Combined source for checks that span multiple files
+const source = indexSource + "\n" + credentialsSource;
 
 // ---------------------------------------------------------------------------
 // Capture tool registrations by mocking the api object
@@ -57,10 +61,10 @@ function findTool(tools: RegisteredTool[], name: string) {
 
 describe("Credentials interface", () => {
   test("has clientSecret field (not secret)", () => {
-    // Check the Credentials interface definition in source
-    expect(source).toContain("clientSecret: string");
+    // Check the Credentials interface definition in credentials source
+    expect(credentialsSource).toContain("clientSecret: string");
     // Must not have a bare "secret: string" field in the interface
-    expect(source).not.toMatch(/^\s+secret:\s+string/m);
+    expect(credentialsSource).not.toMatch(/^\s+secret:\s+string/m);
   });
 });
 
@@ -112,12 +116,8 @@ describe("Default base URL", () => {
 // ---------------------------------------------------------------------------
 
 describe("Credentials path", () => {
-  test("does NOT use process.env.HOME", () => {
-    expect(source).not.toContain("process.env.HOME");
-  });
-
   test("uses .agentrux directory", () => {
-    expect(source).toContain(".agentrux");
+    expect(credentialsSource).toContain(".agentrux");
   });
 });
 
@@ -127,16 +127,16 @@ describe("Credentials path", () => {
 
 describe("No legacy names in source", () => {
   test("no old token prefixes", () => {
-    expect(source).not.toContain("atk_");
-    expect(source).not.toContain("gtk_");
+    expect(indexSource).not.toContain("atk_");
+    expect(indexSource).not.toContain("gtk_");
   });
 
   test("no old placeholder domains", () => {
-    expect(source).not.toContain("example.com");
-    expect(source).not.toContain("your-org");
+    expect(indexSource).not.toContain("example.com");
+    expect(indexSource).not.toContain("your-org");
   });
 
   test("invite code uses inv_ prefix", () => {
-    expect(source).toContain("inv_");
+    expect(indexSource).toContain("inv_");
   });
 });

@@ -1,0 +1,28 @@
+{
+  "id": "agentrux-openclaw-plugin",
+  "name": "@agentrux/agentrux-openclaw-plugin",
+  "description": "AgenTrux ingress + tools for OpenClaw — Agent-to-Agent authenticated Pub/Sub",
+  "entry": "dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["commandTopicId", "resultTopicId", "agentId"],
+    "properties": {
+      "commandTopicId": { "type": "string", "description": "Topic ID to monitor for incoming commands" },
+      "resultTopicId": { "type": "string", "description": "Topic ID to publish results to" },
+      "agentId": { "type": "string", "description": "OpenClaw agent ID for processing (e.g. agentrux-rpa)" },
+      "baseUrl": { "type": "string", "description": "AgenTrux API URL (default: https://api.agentrux.com)" },
+      "pollIntervalMs": { "type": "number", "default": 60000, "description": "Safety poller interval in ms (default 60s)" },
+      "maxConcurrency": { "type": "number", "default": 3 },
+      "subagentTimeoutMs": { "type": "number", "default": 120000 },
+      "execPolicy": {
+        "type": "object",
+        "description": "Controls exec tool availability for the ingress agent",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false, "description": "Enable exec tool (default: disabled)" },
+          "allowedCommands": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Regex patterns for allowed commands" }
+        }
+      }
+    }
+  }
+}
