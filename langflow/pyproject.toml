@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "langflow-agentrux"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Langflow components for AgenTrux - A2A authenticated pub/sub"
 readme = "README.md"
 license = "MIT"

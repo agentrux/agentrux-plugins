@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentrux-agent-tools"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "AI agent toolkit for AgenTrux - framework-agnostic function calling tools"
 readme = "README.md"
 license = "MIT"
