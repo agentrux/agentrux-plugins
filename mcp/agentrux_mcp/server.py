@@ -260,7 +260,7 @@ def _create_server(config: MCPConfig) -> Server:
                     object_id=arguments["object_id"],
                 )
             else:
-                return [TextContent(type="text", text=f"Unknown tool: {name}")]
+                raise ValueError(f"Unknown tool: {name}")
 
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
         except ValueError as e:

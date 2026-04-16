@@ -34,12 +34,18 @@ def _parse_jwt_scope(token: str) -> list[dict[str, str]]:
         logger.warning("Failed to decode JWT for scope parsing")
         return []
 
-    scope_str = payload.get("scope", "")
-    if not scope_str:
+    scope_raw = payload.get("scope", "")
+    if not scope_raw:
         return []
 
+    # scope can be a space-separated string (RFC 6749) or a list (AgenTrux JWT)
+    if isinstance(scope_raw, list):
+        scope_entries = scope_raw
+    else:
+        scope_entries = scope_raw.split()
+
     topics: list[dict[str, str]] = []
-    for entry in scope_str.split():
+    for entry in scope_entries:
         # Expected format: "topic:<uuid>:<action>"
         parts = entry.split(":")
         if len(parts) != 3 or parts[0] != "topic":
