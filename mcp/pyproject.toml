@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentrux-mcp"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "MCP Server for AgenTrux - expose Topic/Event operations to LLMs"
 readme = "README.md"
 requires-python = ">=3.12"
