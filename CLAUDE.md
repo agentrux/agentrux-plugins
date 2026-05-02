@@ -37,7 +37,7 @@ git tag <plugin>-v<version>
 git push origin <plugin>-v<version>
 ```
 
-タグ形式: `<plugin>-v<version>`（例: `sdk-v0.1.0b1`, `mcp-v0.1.0b2`, `flowise-v0.1.0-beta.2`）
+タグ形式: `<plugin>-v<version>`（例: `sdk-v0.1.0b1`, `mcp-v0.1.0b2`, `openclaw-v0.14.5`）
 
 GitHub Actions がタグを検知して自動で PyPI / npm に公開する。
 
@@ -61,9 +61,16 @@ GitHub Actions がタグを検知して自動で PyPI / npm に公開する。
 |------------|----------------------|------------|
 | sdk/ | `agentrux-sdk` | `sdk-v` |
 | agent-sdk/ | `agentrux-agent-tools` | `agent-sdk-v` |
-| mcp/ | `agentrux-mcp` | `mcp-v` |
-| langflow/ | `langflow-agentrux` | `langflow-v` |
-| temporal/ | `temporal-agentrux` | `temporal-v` |
-| flowise/ | `flowise-node-agentrux` | `flowise-v` |
-| n8n/ | `@agentrux/n8n-plugin` | `n8n-v` |
 | openclaw/ | `@agentrux/agentrux-openclaw-plugin` | `openclaw-v` |
+
+### 廃止プラグイン (2026-05-02)
+
+下記は公開停止。新規バージョンは publish しない。
+
+| パッケージ | レジストリでの状態 |
+|---|---|
+| `@agentrux/n8n-plugin` | npm: deprecate |
+| `flowise-node-agentrux` | npm: deprecate |
+| `langflow-agentrux` | PyPI: yank（全 versions） |
+| `temporal-agentrux` | PyPI: yank（全 versions） |
+| `agentrux-mcp` | PyPI: yank（API として内蔵されたため） |

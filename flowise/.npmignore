@@ -1,7 +1,0 @@
-src/
-dist/__tests__/
-*.test.ts
-*.test.js
-*.test.d.ts
-jest.config.*
-tsconfig.json

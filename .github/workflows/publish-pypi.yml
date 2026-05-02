@@ -3,11 +3,12 @@
 # Tag format: <plugin>-v<version>
 #   sdk-v0.1.0b1
 #   agent-sdk-v0.1.0b1
-#   mcp-v0.1.0b1
-#   langflow-v0.1.0b1
-#   temporal-v0.1.0b1
 #
 # Requires secret: PYPI_API_TOKEN
+#
+# 2026-05-02: langflow / temporal plugins were retired. Their PyPI
+# packages (langflow-agentrux, temporal-agentrux) are yanked on the
+# registry; this workflow no longer triggers for those tags.
 
 name: Publish to PyPI
 
@@ -16,9 +17,6 @@ on:
     tags:
       - 'sdk-v*'
       - 'agent-sdk-v*'
-      - 'mcp-v*'
-      - 'langflow-v*'
-      - 'temporal-v*'
 
 permissions:
   contents: read

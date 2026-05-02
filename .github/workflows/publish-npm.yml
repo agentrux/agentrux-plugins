@@ -1,19 +1,19 @@
 # Publish Node.js plugins to npm on tag push.
 #
 # Tag format: <plugin>-v<version>
-#   flowise-v0.1.0-beta.1
-#   n8n-v0.2.0
 #   openclaw-v0.14.5
 #
 # Requires secret: NPM_TOKEN
+#
+# 2026-05-02: n8n / flowise plugins were retired. Their npm packages
+# (@agentrux/n8n-plugin, flowise-node-agentrux) are deprecated on the
+# registry; this workflow no longer triggers for those tags.
 
 name: Publish to npm
 
 on:
   push:
     tags:
-      - 'flowise-v*'
-      - 'n8n-v*'
       - 'openclaw-v*'
 
 permissions:

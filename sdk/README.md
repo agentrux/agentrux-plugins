@@ -33,9 +33,6 @@ async for envelope in client.subscribe("topic-uuid"):
 
 This SDK is the shared transport layer for all AgenTrux Python plugins:
 - `agentrux-agent-tools` — AI agent toolkit
-- `agentrux-mcp` — MCP server
-- `langflow-agentrux` — Langflow components
-- `temporal-agentrux` — Temporal activities
 
 ## License
 
