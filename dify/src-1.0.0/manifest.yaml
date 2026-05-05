@@ -1,0 +1,32 @@
+author: agentrux
+name: agentrux-tools
+version: 1.0.0
+type: plugin
+description:
+  en_US: AgenTrux PubSub Tools — publish, read, and upload events to AgenTrux topics (OAuth 2.1)
+  ja_JP: AgenTrux PubSub ツール — トピックへのイベント発行・読み取り・アップロード（OAuth 2.1）
+label:
+  en_US: AgenTrux Tools
+  ja_JP: AgenTrux ツール
+icon: icon.svg
+created_at: "2026-03-29T00:00:00Z"
+resource:
+  memory: 1048576
+  permission:
+    tool:
+      enabled: true
+tags:
+  - utilities
+plugins:
+  tools:
+    - provider/agentrux_tools.yaml
+meta:
+  version: 0.0.1
+  minimum_dify_version: 1.10.0
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main

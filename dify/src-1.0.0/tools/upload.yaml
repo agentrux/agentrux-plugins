@@ -1,0 +1,70 @@
+identity:
+  name: agentrux_upload
+  author: agentrux
+  label:
+    en_US: Upload File
+    ja_JP: ファイルアップロード
+  description:
+    en_US: Upload a file to an AgenTrux topic
+    ja_JP: AgenTrux トピックにファイルをアップロードする
+
+description:
+  human:
+    en_US: Uploads file content to an AgenTrux topic and returns an object_id for attachment
+    ja_JP: ファイル内容を AgenTrux トピックにアップロードし、添付用の object_id を返します
+  llm: Upload file content to an AgenTrux topic. Returns object_id and download_url that can be included in event attachments.
+
+parameters:
+  - name: topic_id
+    type: dynamic-select
+    required: true
+    label:
+      en_US: Topic
+      ja_JP: Topic
+    human_description:
+      en_US: Select an AgenTrux topic (write-granted topics only)
+      ja_JP: AgenTrux トピックを選択（write 権限のある Topic のみ）
+    llm_description: UUID of the AgenTrux topic (write-granted)
+    form: form
+
+  - name: filename
+    type: string
+    required: true
+    label:
+      en_US: Filename
+    human_description:
+      en_US: Name of the file (e.g. "report.pdf")
+    llm_description: Name of the file (e.g. "report.pdf")
+    form: llm
+
+  - name: content_type
+    type: string
+    required: true
+    label:
+      en_US: Content Type
+    human_description:
+      en_US: "MIME type (e.g. 'text/plain', 'image/png')"
+    llm_description: "MIME type (e.g. 'text/plain', 'image/png')"
+    form: llm
+
+  - name: content_base64
+    type: string
+    required: true
+    label:
+      en_US: Content (Base64)
+    human_description:
+      en_US: Base64-encoded file content
+    llm_description: Base64-encoded file content
+    form: llm
+
+output_schema:
+  type: object
+  properties:
+    object_id:
+      type: string
+    download_url:
+      type: string
+
+extra:
+  python:
+    source: tools/upload.py

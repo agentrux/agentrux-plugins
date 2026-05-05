@@ -1,0 +1,103 @@
+identity:
+  author: agentrux
+  name: agentrux_tools
+  label:
+    en_US: AgenTrux
+    ja_JP: AgenTrux
+  description:
+    en_US: Publish, read, and upload to AgenTrux PubSub topics (OAuth 2.1)
+    ja_JP: AgenTrux PubSub トピックへのイベント発行・読み取り・アップロード（OAuth 2.1）
+  icon: icon.svg
+  tags:
+    - utilities
+
+# ---------------------------------------------------------------------------
+# Auth: dual support
+#   - oauth_schema       — Authorization Code + PKCE (Dify 1.10+, recommended)
+#   - credentials_for_provider — client_credentials fallback (manual paste)
+#
+# Dify allows BOTH to be present; users pick whichever flow matches their
+# Dify deployment (Cloud vs self-hosted-without-public-callback).
+# ---------------------------------------------------------------------------
+
+oauth_schema:
+  client_schema:
+    - name: base_url
+      type: text-input
+      required: true
+      label:
+        en_US: AgenTrux API URL
+        ja_JP: AgenTrux API URL
+      default: https://api.agentrux.com
+      help:
+        en_US: Base URL of the AgenTrux API (e.g. https://api.agentrux.com)
+        ja_JP: AgenTrux API のベース URL（例 https://api.agentrux.com）
+    - name: client_id
+      type: secret-input
+      required: true
+      label:
+        en_US: OAuth Client ID
+        ja_JP: OAuth クライアント ID
+      help:
+        en_US: "Issued by POST /oauth/register on the AgenTrux Console (oauth-client_<uuid>)."
+        ja_JP: "AgenTrux Console の POST /oauth/register で発行（oauth-client_<uuid>）。"
+    - name: client_secret
+      type: secret-input
+      required: false
+      label:
+        en_US: OAuth Client Secret (optional)
+        ja_JP: OAuth クライアントシークレット（任意）
+      help:
+        en_US: "Public clients (PKCE) leave blank. Confidential clients paste the secret returned by /oauth/register."
+        ja_JP: "Public クライアント（PKCE）の場合は空欄。Confidential クライアントは /oauth/register が返したシークレットを貼り付け。"
+  credentials_schema:
+    - name: base_url
+      type: text-input
+    - name: access_token
+      type: secret-input
+    - name: refresh_token
+      type: secret-input
+    - name: expires_at
+      type: text-input
+    - name: scope
+      type: text-input
+
+credentials_for_provider:
+  base_url:
+    type: text-input
+    required: true
+    label:
+      en_US: AgenTrux API URL
+      ja_JP: AgenTrux API URL
+    placeholder:
+      en_US: https://api.agentrux.com
+    default: https://api.agentrux.com
+  client_id:
+    type: text-input
+    required: true
+    label:
+      en_US: Script Client ID
+      ja_JP: Script クライアント ID
+    help:
+      en_US: "Script credential ID from AgenTrux Console (must start with 'script_'). Used for grant_type=client_credentials."
+      ja_JP: "AgenTrux Console で発行した Script credential ID（必ず 'script_' で始まる）。grant_type=client_credentials で使用。"
+    placeholder:
+      en_US: "script_..."
+  client_secret:
+    type: secret-input
+    required: true
+    label:
+      en_US: Script Client Secret
+      ja_JP: Script クライアントシークレット
+    help:
+      en_US: "Script credential secret paired with the client_id above."
+      ja_JP: "上記 client_id とペアの Script credential secret。"
+
+tools:
+  - tools/publish.yaml
+  - tools/read.yaml
+  - tools/upload.yaml
+
+extra:
+  python:
+    source: provider/agentrux_tools.py

@@ -1,0 +1,63 @@
+identity:
+  name: agentrux_read
+  author: agentrux
+  label:
+    en_US: Read Events
+    ja_JP: イベント読み取り
+  description:
+    en_US: Read events from an AgenTrux topic
+    ja_JP: AgenTrux トピックからイベントを読み取る
+
+description:
+  human:
+    en_US: Reads recent events from the specified AgenTrux topic
+    ja_JP: 指定した AgenTrux トピックから最近のイベントを読み取ります
+  llm: Read recent events from an AgenTrux PubSub topic. Use this to check messages, responses, or status updates from other agents.
+
+parameters:
+  - name: topic_id
+    type: dynamic-select
+    required: true
+    label:
+      en_US: Topic
+      ja_JP: Topic
+    human_description:
+      en_US: Select an AgenTrux topic (read-granted topics only)
+      ja_JP: AgenTrux トピックを選択（read 権限のある Topic のみ）
+    llm_description: UUID of the AgenTrux topic to read from (read-granted)
+    form: form
+
+  - name: limit
+    type: number
+    required: false
+    label:
+      en_US: Limit
+    human_description:
+      en_US: Maximum number of events to return (default 10)
+    llm_description: Maximum number of events to return (default 10)
+    form: llm
+    default: 10
+
+  - name: event_type
+    type: string
+    required: false
+    label:
+      en_US: Event Type Filter
+    human_description:
+      en_US: "Optional: only return events of this type"
+    llm_description: "Optional: only return events of this type"
+    form: llm
+
+output_schema:
+  type: object
+  properties:
+    count:
+      type: number
+    events:
+      type: array
+      items:
+        type: object
+
+extra:
+  python:
+    source: tools/read.py

@@ -1,0 +1,70 @@
+identity:
+  name: agentrux_publish
+  author: agentrux
+  label:
+    en_US: Publish Event
+    ja_JP: イベント発行
+  description:
+    en_US: Publish an event to an AgenTrux topic
+    ja_JP: AgenTrux トピックにイベントを発行する
+
+description:
+  human:
+    en_US: Publishes a JSON event to the specified AgenTrux topic
+    ja_JP: 指定した AgenTrux トピックに JSON イベントを発行します
+  llm: Publish a JSON event to an AgenTrux PubSub topic. Use this to send messages, results, or notifications to other agents.
+
+parameters:
+  - name: topic_id
+    type: dynamic-select
+    required: true
+    label:
+      en_US: Topic
+      ja_JP: Topic
+    human_description:
+      en_US: Select an AgenTrux topic (write-granted topics only)
+      ja_JP: AgenTrux トピックを選択（write 権限のある Topic のみ）
+    llm_description: UUID of the target AgenTrux topic (write-granted)
+    form: form
+
+  - name: event_type
+    type: string
+    required: true
+    label:
+      en_US: Event Type
+    human_description:
+      en_US: "Event type string (e.g. 'dify.response', 'message.send')"
+    llm_description: "Event type string (e.g. 'dify.response', 'message.send')"
+    form: llm
+
+  - name: payload_json
+    type: string
+    required: true
+    label:
+      en_US: Payload (JSON)
+    human_description:
+      en_US: JSON string of the event payload
+    llm_description: JSON string of the event payload
+    form: llm
+
+  - name: correlation_id
+    type: string
+    required: false
+    label:
+      en_US: Correlation ID
+    human_description:
+      en_US: Optional correlation ID for request-reply tracking
+    llm_description: Optional correlation ID for request-reply tracking
+    form: llm
+
+output_schema:
+  type: object
+  properties:
+    event_id:
+      type: string
+    sequence_no:
+      type: number
+
+extra:
+  python:
+    source: tools/publish.py
