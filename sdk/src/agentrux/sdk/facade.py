@@ -318,10 +318,13 @@ class AgenTruxClient:
         )
 
     async def get_token(self, script_id: str, client_secret: str) -> dict:
-        """Get JWT. POST /auth/token."""
-        return await AgenTruxAPIClient.auth_request(
-            self._base_url, "/auth/token",
-            {"script_id": script_id, "client_secret": client_secret},
+        """Get JWT via OAuth 2.1 client_credentials grant.
+
+        POST /oauth/token (form-encoded). Returns the OAuth response dict
+        ``{access_token, token_type, expires_in, refresh_token?}``.
+        """
+        return await AgenTruxAPIClient.oauth_token(
+            self._base_url, script_id, client_secret,
         )
 
     @staticmethod
@@ -379,9 +382,8 @@ class AgenTruxClient:
         # Get JWT (with automatic Client secret rotation on expiry)
         logger.info("Obtaining JWT...")
         try:
-            token_data = await AgenTruxAPIClient.auth_request(
-                base_url, "/auth/token",
-                {"script_id": script_id, "client_secret": client_secret},
+            token_data = await AgenTruxAPIClient.oauth_token(
+                base_url, script_id, client_secret,
             )
         except Exception as e:
             err_str = str(e).lower()

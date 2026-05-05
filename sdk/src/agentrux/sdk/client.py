@@ -251,8 +251,42 @@ class AgenTruxAPIClient:
 
     @staticmethod
     async def auth_request(base_url: str, path: str, body: dict) -> dict:
-        """POST an unauthenticated request to an auth endpoint. Returns JSON."""
+        """POST an unauthenticated JSON request to an auth endpoint. Returns JSON."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{base_url.rstrip('/')}{path}", json=body)
+            resp.raise_for_status()
+            return resp.json()
+
+    @staticmethod
+    async def oauth_token(
+        base_url: str, script_id: str, client_secret: str,
+    ) -> dict:
+        """Exchange script credentials for an access token via OAuth 2.1
+        client_credentials grant. POST /oauth/token (form-encoded).
+
+        client_id is the script identifier with the ``script_`` prefix
+        (added automatically here if the caller passes the bare UUID).
+
+        Returns the standard OAuth response dict::
+
+            {
+                "access_token": "...",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "...",   # optional
+            }
+        """
+        cid = script_id if script_id.startswith("script_") else f"script_{script_id}"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": cid,
+            "client_secret": client_secret,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{base_url.rstrip('/')}/oauth/token",
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
             resp.raise_for_status()
             return resp.json()
