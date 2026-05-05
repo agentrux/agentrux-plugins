@@ -17,6 +17,27 @@ export function httpJson(
   body?: Record<string, unknown>,
   headers?: Record<string, string>,
 ): Promise<{ status: number; data: any }> {
+  return httpRaw(method, url, "application/json", body ? JSON.stringify(body) : undefined, headers);
+}
+
+/** OAuth 2.1 token endpoint: application/x-www-form-urlencoded body. */
+export function httpForm(
+  method: string,
+  url: string,
+  form: Record<string, string>,
+  headers?: Record<string, string>,
+): Promise<{ status: number; data: any }> {
+  const body = new URLSearchParams(form).toString();
+  return httpRaw(method, url, "application/x-www-form-urlencoded", body, headers);
+}
+
+function httpRaw(
+  method: string,
+  url: string,
+  contentType: string,
+  body: string | undefined,
+  headers?: Record<string, string>,
+): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === "https:" ? https : http;
@@ -26,7 +47,7 @@ export function httpJson(
       port: u.port,
       path: u.pathname + u.search,
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": contentType,
         ...headers,
       },
     };
@@ -42,7 +63,7 @@ export function httpJson(
       });
     });
     req.on("error", reject);
-    if (body) req.write(JSON.stringify(body));
+    if (body) req.write(body);
     req.end();
   });
 }
@@ -53,7 +74,8 @@ export function httpJson(
 
 interface TokenState {
   access_token: string;
-  refresh_token: string;
+  /** Null when the issuing grant did not return one (e.g. client_credentials). */
+  refresh_token: string | null;
   expires_at: number; // epoch ms
 }
 
@@ -109,9 +131,13 @@ export async function ensureToken(creds: Credentials): Promise<string> {
         tokenState = null;
       }
 
-      // Full re-auth with client_secret.
-      const r = await httpJson("POST", `${creds.base_url}/auth/token`, {
-        script_id: creds.script_id,
+      // Full re-auth via OAuth 2.1 client_credentials grant.
+      // POST /oauth/token, form-encoded; client_id has the `script_<UUID>`
+      // namespace prefix that distinguishes a Script credential from a
+      // DCR-issued OAuth client.
+      const r = await httpForm("POST", `${creds.base_url}/oauth/token`, {
+        grant_type: "client_credentials",
+        client_id: `script_${creds.script_id}`,
         client_secret: creds.clientSecret,
       });
       if (r.status !== 200) {
@@ -119,8 +145,10 @@ export async function ensureToken(creds: Credentials): Promise<string> {
       }
       tokenState = {
         access_token: r.data.access_token,
-        refresh_token: r.data.refresh_token,
-        expires_at: parseExpiresAt(r.data.expires_at),
+        // OAuth client_credentials does not issue a refresh_token by spec;
+        // null here means future ensureToken() calls go straight to re-auth.
+        refresh_token: r.data.refresh_token ?? null,
+        expires_at: oauthExpiresAt(r.data.expires_in),
       };
       return tokenState.access_token;
     } finally {
@@ -158,6 +186,14 @@ function parseExpiresAt(ea: unknown): number {
     return new Date(ea).getTime();
   }
   return typeof ea === "number" ? ea : Date.now() + 3600_000;
+}
+
+/** OAuth `expires_in` is seconds-from-now; convert to absolute epoch ms. */
+function oauthExpiresAt(ei: unknown): number {
+  if (typeof ei === "number" && Number.isFinite(ei) && ei > 0) {
+    return Date.now() + ei * 1000;
+  }
+  return Date.now() + 3600_000;
 }
 
 // ---------------------------------------------------------------------------

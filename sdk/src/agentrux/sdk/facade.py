@@ -304,12 +304,6 @@ class AgenTruxClient:
 
     # --- Auth / Provisioning ---
 
-    async def activate(self, activation_code: str) -> dict:
-        """Activate script. POST /auth/activate."""
-        return await AgenTruxAPIClient.auth_request(
-            self._base_url, "/auth/activate", {"activation_code": activation_code},
-        )
-
     async def redeem_grant(self, invite_code: str, script_id: str, client_secret: str) -> dict:
         """Redeem an invite code. POST /auth/redeem-invite-code."""
         return await AgenTruxAPIClient.auth_request(
@@ -331,40 +325,31 @@ class AgenTruxClient:
     async def bootstrap(
         base_url: str,
         *,
-        activation_code: str | None = None,
         invite_code: str | None = None,
         credentials_file: str = ".agentrux_credentials.json",
     ) -> AgenTruxClient:
         """Auto-provision and return an authenticated client.
 
-        First run: activate -> redeem grant -> get token -> save credentials.
-        Subsequent runs: load credentials -> get token.
+        Loads script_id + client_secret from credentials_file (issued by an
+        admin in the web console) and exchanges them for a JWT via the
+        OAuth 2.1 client_credentials grant. Optionally redeems an invite
+        code first for cross-Alias access.
 
         The credentials_file contains sensitive data (script_id, client_secret).
         Do NOT commit it to version control. File permissions are set to 0600.
 
         Args:
             base_url: AgenTrux server URL
-            activation_code: Activation code (first run only)
             invite_code: Invite code (cross-account only)
             credentials_file: Path to save/load credentials
         """
         creds = _load_credentials(credentials_file)
 
-        # First-time activation
-        if "script_id" not in creds and activation_code:
-            logger.info("Activating script with activation code...")
-            result = await AgenTruxAPIClient.auth_request(
-                base_url, "/auth/activate", {"activation_code": activation_code},
-            )
-            creds["script_id"] = result["script_id"]
-            creds["client_secret"] = result["client_secret"]
-            _save_credentials(credentials_file, creds)
-
         if "script_id" not in creds:
             raise SDKError(
-                "No credentials found. Provide activation_code for first-time setup, "
-                f"or ensure {credentials_file} exists."
+                f"No credentials found in {credentials_file}. "
+                "Issue a Script in the web console (it will display script_id "
+                "and client_secret), then save both into the credentials file."
             )
 
         script_id = creds["script_id"]
