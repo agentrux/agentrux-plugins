@@ -160,6 +160,49 @@ def _ensure_registered_client(base_url: str) -> str:
     return client_id
 
 
+# A small set of legacy AgenTrux internal error codes that map onto the
+# RFC 8628 §3.5 device-flow polling vocabulary. Backend currently
+# returns its own error envelope (`{"error": {"code": ..., "message":
+# ...}}`) for some grant flows even though RFC 6749 §5.2 prescribes a
+# flat `{"error": "<code>"}` shape. We translate so the CLI's polling
+# loop is robust to either response shape, and so a future backend
+# fix that flips to the RFC form remains a no-op for clients.
+_LEGACY_TO_OAUTH_ERR = {
+    # Server uses RATE_LIMITED with the human message "user has not yet
+    # approved" while the device_code is alive but unredeemed.
+    "RATE_LIMITED": "authorization_pending",
+}
+
+
+def _coerce_oauth_error(payload: dict | None) -> str:
+    """Extract a flat OAuth error code from a /oauth/token error response.
+
+    Returns "" when the payload has no error to report. Tolerates two
+    shapes:
+      - RFC 6749 §5.2: ``{"error": "authorization_pending", ...}``
+      - AgenTrux legacy wrapper: ``{"error": {"code": "RATE_LIMITED",
+        "message": "user has not yet approved"}}``
+
+    The legacy ``code`` is mapped onto RFC 8628 §3.5 polling vocabulary
+    when we can recognise it, and otherwise passed through verbatim so
+    a fresh server-side error name still surfaces in logs.
+    """
+    if not payload:
+        return ""
+    err = payload.get("error", "")
+    if isinstance(err, dict):
+        msg = (err.get("message") or "").lower()
+        code = err.get("code") or ""
+        if code == "RATE_LIMITED" and "approved" in msg:
+            return "authorization_pending"
+        if code == "RATE_LIMITED" and "slow" in msg:
+            return "slow_down"
+        return _LEGACY_TO_OAUTH_ERR.get(code, code) if isinstance(code, str) else ""
+    if isinstance(err, str):
+        return err
+    return ""
+
+
 def _post(url: str, data: dict, timeout: float = 10.0) -> tuple[int, dict]:
     """Issue a form-encoded POST and parse the JSON response.
 
@@ -274,7 +317,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
         # Surface OAuth's standard error fields only; never the full
         # JSON (avoids leaking server-internal details if the backend
         # ever expands the error payload).
-        err = (payload or {}).get("error", f"http_{status}")
+        err = _coerce_oauth_error(payload) or f"http_{status}"
         desc = (payload or {}).get("error_description", "")
         print(f"error: device_authorization failed: {err} {desc}".strip(), file=sys.stderr)
         return 1
@@ -346,7 +389,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
             print(f"✓ Authorized as Script {script_id or '(unknown)'}.")
             print(f"  Tokens saved to {path} [{args.profile}]")
             return 0
-        err = (token_payload or {}).get("error", "")
+        err = _coerce_oauth_error(token_payload)
         if err == "authorization_pending":
             continue
         if err == "slow_down":
@@ -359,8 +402,8 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
         # Unknown 4xx — surface it so we don't poll forever.
         if status >= 400:
             print()
-            err_name = (token_payload or {}).get("error", f"http_{status}")
-            err_desc = (token_payload or {}).get("error_description", "")
+            err_desc = (token_payload or {}).get("error_description") or ""
+            err_name = err or f"http_{status}"
             print(f"error: token poll failed: {err_name} {err_desc}".strip(), file=sys.stderr)
             return 1
 

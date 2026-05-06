@@ -205,3 +205,36 @@ def test_persist_hook_writes_token_bundle_back(
     assert sec["refresh_token"] == "RT-rotated"
     assert sec["client_id"] == "oauth-client_xyz"  # untouched
     assert int(sec["expires_at"]) == bundle.expires_at
+
+
+# ---------------------------------------------------------------------------
+# Error coercion for the device-flow poll loop
+# ---------------------------------------------------------------------------
+
+def test_coerce_rfc_oauth_error() -> None:
+    from agentrux_agent_tools.cli import _coerce_oauth_error
+    assert _coerce_oauth_error({"error": "authorization_pending"}) == "authorization_pending"
+    assert _coerce_oauth_error({"error": "access_denied"}) == "access_denied"
+    assert _coerce_oauth_error({}) == ""
+    assert _coerce_oauth_error(None) == ""
+
+
+def test_coerce_agentrux_wrapper_pending() -> None:
+    """Server returns AgenTrux's internal error shape for pending poll.
+
+    RFC 8628 §3.5 prescribes ``{"error": "authorization_pending"}`` but
+    the live backend currently emits
+    ``{"error": {"code": "RATE_LIMITED", "message": "user has not yet
+    approved"}}`` for that same case. The CLI must not crash on the
+    dict shape and must translate it back to the RFC vocabulary so the
+    polling loop keeps waiting instead of bailing.
+    """
+    from agentrux_agent_tools.cli import _coerce_oauth_error
+    payload = {"error": {"code": "RATE_LIMITED", "message": "user has not yet approved"}}
+    assert _coerce_oauth_error(payload) == "authorization_pending"
+
+
+def test_coerce_unknown_dict_error_passes_code_through() -> None:
+    from agentrux_agent_tools.cli import _coerce_oauth_error
+    payload = {"error": {"code": "FORBIDDEN", "message": "no"}}
+    assert _coerce_oauth_error(payload) == "FORBIDDEN"
