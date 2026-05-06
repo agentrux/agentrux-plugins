@@ -74,32 +74,24 @@ function httpRaw(
 
 interface TokenState {
   access_token: string;
-  /** Null when the issuing grant did not return one (e.g. client_credentials). */
-  refresh_token: string | null;
   expires_at: number; // epoch ms
 }
 
 let tokenState: TokenState | null = null;
 
-// Single-flight gate. Concurrent callers that arrive while a refresh /
-// token-issue is in progress await the same in-flight promise instead of
-// each issuing their own /auth/refresh. This is required because:
+// Single-flight gate. Concurrent callers that arrive while a token
+// issue is in progress await the same in-flight promise instead of
+// each issuing their own /oauth/token call. The plugin issues many
+// concurrent API calls (pullEvents, publishEvent, agentrux_upload) on
+// the same shared tokenState; without coalescing they would each
+// hammer /oauth/token in lock-step and burn the rate limit.
 //
-//   1. AgenTrux refresh tokens are SINGLE-USE — the server revokes the
-//      old refresh_token and issues a new one on every successful
-//      /auth/refresh ([auth_router.py:181]). If two callers race with the
-//      same refresh_token, exactly one wins and the other gets 401, with
-//      no way to know which is which.
-//
-//   2. The plugin issues many concurrent API calls (pullEvents,
-//      publishEvent, agentrux_upload) on the same shared tokenState. The
-//      previous implementation called /auth/refresh from each of them
-//      independently as soon as the access_token expired, blowing through
-//      both the refresh rate limit (20/h) and the token rate limit (10/h).
-//
-// On refresh failure we explicitly clear tokenState so the next caller
-// falls through to client_secret re-auth instead of retrying the dead
-// refresh_token forever.
+// Note: the OAuth 2.1 ``client_credentials`` grant does NOT issue a
+// refresh_token (RFC 6749 §4.4 + AgenTrux spec §22.2). The plugin runs
+// as a script credential, so the only refresh path here is "discard
+// expired access_token, mint a fresh one with client_id+secret". The
+// previous implementation kept a /auth/refresh branch for the
+// short-lived AC era; that branch and the endpoint behind it are gone.
 let inflight: Promise<string> | null = null;
 
 export async function ensureToken(creds: Credentials): Promise<string> {
@@ -108,30 +100,12 @@ export async function ensureToken(creds: Credentials): Promise<string> {
     return tokenState.access_token;
   }
 
-  // Coalesce concurrent callers onto a single in-flight refresh / re-auth.
+  // Coalesce concurrent callers onto a single in-flight token issue.
   if (inflight) return inflight;
 
   inflight = (async () => {
     try {
-      // Try refresh first if we have one.
-      if (tokenState?.refresh_token) {
-        const r = await httpJson("POST", `${creds.base_url}/auth/refresh`, {
-          refresh_token: tokenState.refresh_token,
-        });
-        if (r.status === 200 && r.data?.access_token) {
-          tokenState = {
-            access_token: r.data.access_token,
-            refresh_token: r.data.refresh_token,
-            expires_at: parseExpiresAt(r.data.expires_at),
-          };
-          return tokenState.access_token;
-        }
-        // Refresh failed (expired / consumed / revoked). Burn the dead
-        // refresh_token before falling through so we never retry it.
-        tokenState = null;
-      }
-
-      // Full re-auth via OAuth 2.1 client_credentials grant.
+      // Issue (or re-issue) via OAuth 2.1 client_credentials grant.
       // POST /oauth/token, form-encoded; client_id has the `script_<UUID>`
       // namespace prefix that distinguishes a Script credential from a
       // DCR-issued OAuth client.
@@ -145,9 +119,6 @@ export async function ensureToken(creds: Credentials): Promise<string> {
       }
       tokenState = {
         access_token: r.data.access_token,
-        // OAuth client_credentials does not issue a refresh_token by spec;
-        // null here means future ensureToken() calls go straight to re-auth.
-        refresh_token: r.data.refresh_token ?? null,
         expires_at: oauthExpiresAt(r.data.expires_in),
       };
       return tokenState.access_token;
@@ -179,13 +150,6 @@ export function invalidateIfStillCurrent(expected: string): boolean {
     return true;
   }
   return false;
-}
-
-function parseExpiresAt(ea: unknown): number {
-  if (typeof ea === "string" && ea.includes("T")) {
-    return new Date(ea).getTime();
-  }
-  return typeof ea === "number" ? ea : Date.now() + 3600_000;
 }
 
 /** OAuth `expires_in` is seconds-from-now; convert to absolute epoch ms. */

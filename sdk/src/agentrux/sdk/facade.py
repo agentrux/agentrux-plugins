@@ -11,7 +11,7 @@ import stat
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from agentrux.sdk.checkpoint import CheckpointStore
-from agentrux.sdk.client import AgenTruxAPIClient, TokenRefresher
+from agentrux.sdk.client import AgenTruxAPIClient, TokenRefreshedHook, TokenRefresher
 from agentrux.sdk.envelope import MessageEnvelope
 from agentrux.sdk.errors import SDKError
 from agentrux.sdk.gap_detector import GapDetector
@@ -136,7 +136,9 @@ class AgenTruxClient:
         token: str,
         *,
         refresh_token: str | None = None,
+        oauth_client_id: str | None = None,
         token_refresher: TokenRefresher | None = None,
+        on_token_refreshed: TokenRefreshedHook | None = None,
         timeout_s: float = 30.0,
     ):
         if not base_url:
@@ -147,7 +149,9 @@ class AgenTruxClient:
             base_url=base_url,
             token=token,
             refresh_token=refresh_token,
+            oauth_client_id=oauth_client_id,
             token_refresher=token_refresher,
+            on_token_refreshed=on_token_refreshed,
             timeout_s=timeout_s,
         )
         self._subscriptions: list[Subscription] = []
@@ -443,7 +447,9 @@ def connect(
     token: str,
     *,
     refresh_token: str | None = None,
+    oauth_client_id: str | None = None,
     token_refresher: TokenRefresher | None = None,
+    on_token_refreshed: TokenRefreshedHook | None = None,
     timeout_s: float = 30.0,
 ) -> AgenTruxClient:
     """Create an AgenTruxClient. Use with async with.
@@ -456,7 +462,9 @@ def connect(
         base_url=base_url,
         token=token,
         refresh_token=refresh_token,
+        oauth_client_id=oauth_client_id,
         token_refresher=token_refresher,
+        on_token_refreshed=on_token_refreshed,
         timeout_s=timeout_s,
     )
 

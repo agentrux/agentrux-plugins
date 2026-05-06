@@ -26,15 +26,19 @@ from __future__ import annotations
 import argparse
 import base64
 import configparser
+import contextlib
+import fcntl
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import Iterator
 
 
 def _jwt_payload(token: str) -> dict:
@@ -61,6 +65,41 @@ CREDENTIALS_PATH = Path.home() / ".agentrux" / "credentials"
 # login). Public client (no secret) — PKCE / device_code flow does
 # not need a confidential client.
 CLIENT_REGISTRATION_PATH = Path.home() / ".agentrux" / "cli-client.json"
+# Per-profile lock file. Used by both `agentrux login` (write side) and
+# the runtime toolkit's refresh write-back to serialise the entire
+# read → check expiry → refresh API call → write region for one
+# profile. Without it, two processes can both burn the single-use
+# refresh_token at once, ending up with one stale and one revoked.
+LOCKS_DIR = Path.home() / ".agentrux" / "locks"
+
+
+def _profile_lock_path(profile: str) -> Path:
+    # Lock files are POSIX-only (fcntl). Profile names are validated to
+    # plain identifiers; Path() rejects path separators outright.
+    safe = profile.replace("/", "_").replace("\\", "_")
+    return LOCKS_DIR / f"{safe}.lock"
+
+
+@contextlib.contextmanager
+def _profile_lock(profile: str) -> "Iterator[None]":
+    """Acquire an exclusive flock on the per-profile lock file.
+
+    The lock file lives separately from the credentials file so we can
+    flock() on it without keeping the credentials file open for the
+    entire critical section (which would interfere with atomic rename
+    on write).
+    """
+    LOCKS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _profile_lock_path(profile)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _ensure_registered_client(base_url: str) -> str:
@@ -154,6 +193,7 @@ def _save_credentials(
     access_token: str,
     refresh_token: str,
     expires_at: int,
+    client_id: str,
 ) -> Path:
     """Write the OAuth tokens to ~/.agentrux/credentials, mode 0600.
 
@@ -161,6 +201,18 @@ def _save_credentials(
     ~/.config/gh/hosts.yml) so users immediately know what to grep for
     when they audit local secrets. expires_at is unix epoch — runtime
     SDK code compares to wall clock to decide refresh.
+
+    ``client_id`` is the DCR-registered OAuth client_id used to obtain
+    these tokens; the runtime toolkit needs it to call /oauth/token's
+    refresh_token grant (which mandates client_id per RFC 6749 §6 +
+    AgenTrux spec §22.2). We persist it per-profile rather than relying
+    on ~/.agentrux/cli-client.json so an `--client-id` override at login
+    time stays bound to the credentials it produced.
+
+    Atomic write via NamedTemporaryFile + os.replace so a crashed write
+    cannot leave a half-written INI behind. Caller is expected to hold
+    ``_profile_lock(profile)`` so concurrent writes don't trample each
+    other's `[default]` section.
     """
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = configparser.ConfigParser()
@@ -172,10 +224,19 @@ def _save_credentials(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "expires_at": str(expires_at),
+        "client_id": client_id,
     }
-    with open(CREDENTIALS_PATH, "w") as f:
-        cfg.write(f)
-    os.chmod(CREDENTIALS_PATH, 0o600)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=str(CREDENTIALS_PATH.parent),
+        prefix=".credentials.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        cfg.write(tmp)
+        tmp_path = Path(tmp.name)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, CREDENTIALS_PATH)
     return CREDENTIALS_PATH
 
 
@@ -184,6 +245,15 @@ def cmd_login(args: argparse.Namespace) -> int:
     # Lazy DCR: the first login on a host registers a public OAuth
     # client; subsequent logins reuse that client_id. Skipping if the
     # user passed --client-id (e.g. an operator-pre-registered one).
+    # Hold the per-profile lock for the entire login run — without it,
+    # two concurrent `agentrux login` against the same profile would
+    # both write to the credentials file and the second would clobber
+    # the first's tokens before they were ever used.
+    with _profile_lock(args.profile):
+        return _run_login(args, base_url)
+
+
+def _run_login(args: argparse.Namespace, base_url: str) -> int:
     if args.client_id:
         client_id = args.client_id
     else:
@@ -270,7 +340,8 @@ def cmd_login(args: argparse.Namespace) -> int:
             )
             expires_at = int(time.time()) + expires_in
             path = _save_credentials(
-                args.profile, base_url, script_id, access_token, refresh_token, expires_at,
+                args.profile, base_url, script_id, access_token, refresh_token,
+                expires_at, client_id,
             )
             print(f"✓ Authorized as Script {script_id or '(unknown)'}.")
             print(f"  Tokens saved to {path} [{args.profile}]")
@@ -335,13 +406,23 @@ def cmd_logout(args: argparse.Namespace) -> int:
     """Drop a profile from ~/.agentrux/credentials."""
     if not CREDENTIALS_PATH.exists():
         return 0
-    cfg = configparser.ConfigParser()
-    cfg.read(CREDENTIALS_PATH)
-    if args.profile not in cfg:
-        return 0
-    cfg.remove_section(args.profile)
-    with open(CREDENTIALS_PATH, "w") as f:
-        cfg.write(f)
+    with _profile_lock(args.profile):
+        cfg = configparser.ConfigParser()
+        cfg.read(CREDENTIALS_PATH)
+        if args.profile not in cfg:
+            return 0
+        cfg.remove_section(args.profile)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=str(CREDENTIALS_PATH.parent),
+            prefix=".credentials.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            cfg.write(tmp)
+            tmp_path = Path(tmp.name)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, CREDENTIALS_PATH)
     print(f"Removed profile {args.profile!r}")
     return 0
 

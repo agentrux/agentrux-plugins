@@ -14,6 +14,7 @@ import pytest
 # This must happen BEFORE importing toolkit.
 # ---------------------------------------------------------------------------
 _fake_facade = ModuleType("agentrux.sdk.facade")
+_fake_client = ModuleType("agentrux.sdk.client")
 
 
 class _StubClient:
@@ -26,13 +27,28 @@ class _StubClient:
         pass
 
 
-_fake_facade.AgenTruxClient = _StubClient  # type: ignore[attr-defined]
+from dataclasses import dataclass
 
-# Build the parent package path so Python resolves `agentrux.sdk.facade`
-for mod_name in ("agentrux", "agentrux.sdk", "agentrux.sdk.facade"):
+
+@dataclass(frozen=True)
+class _StubTokenBundle:
+    access_token: str
+    refresh_token: str
+    expires_at: int
+
+
+_fake_facade.AgenTruxClient = _StubClient  # type: ignore[attr-defined]
+_fake_client.TokenBundle = _StubTokenBundle  # type: ignore[attr-defined]
+
+# Build the parent package path so Python resolves the SDK submodules.
+for mod_name in (
+    "agentrux", "agentrux.sdk", "agentrux.sdk.facade", "agentrux.sdk.client",
+):
     if mod_name not in sys.modules:
         if mod_name == "agentrux.sdk.facade":
             sys.modules[mod_name] = _fake_facade
+        elif mod_name == "agentrux.sdk.client":
+            sys.modules[mod_name] = _fake_client
         else:
             pkg = ModuleType(mod_name)
             pkg.__path__ = []  # type: ignore[attr-defined]
@@ -122,55 +138,84 @@ class TestToolkitCreate:
     """Tests for AgenTruxToolkit.create() parameter validation."""
 
     @pytest.mark.asyncio
-    async def test_create_raises_when_base_url_missing(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_create_raises_when_no_credentials_anywhere(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
     ) -> None:
-        """create() raises ValueError when base_url is not provided."""
+        """create() raises ValueError when none of the 3 auth paths can succeed.
+
+        With every env var unset, no explicit args, and an empty
+        credentials file, the toolkit must surface the device-flow hint
+        rather than silently succeed.
+        """
         monkeypatch.delenv("AGENTRUX_BASE_URL", raising=False)
         monkeypatch.delenv("AGENTRUX_SCRIPT_ID", raising=False)
         monkeypatch.delenv("AGENTRUX_CLIENT_SECRET", raising=False)
+        monkeypatch.delenv("AGENTRUX_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("AGENTRUX_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("AGENTRUX_OAUTH_CLIENT_ID", raising=False)
         monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
+        # The toolkit's _CREDENTIALS_PATH is computed at import time, so
+        # an env-var flip alone won't redirect it. Override the module
+        # constant directly to point at an empty tmp_path.
+        from pathlib import Path as _Path
+        import agentrux_agent_tools.toolkit as _tk
+        monkeypatch.setattr(
+            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+        )
 
-        with pytest.raises(ValueError, match="base_url is required"):
+        with pytest.raises(ValueError, match="No credentials found"):
             await AgenTruxToolkit.create()
 
     @pytest.mark.asyncio
-    async def test_create_raises_when_script_id_and_secret_missing(
+    async def test_create_raises_when_access_token_without_base_url(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """create() raises ValueError when script_id/client_secret are missing."""
-        monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
-        monkeypatch.delenv("AGENTRUX_SCRIPT_ID", raising=False)
-        monkeypatch.delenv("AGENTRUX_CLIENT_SECRET", raising=False)
-        monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
-
-        with pytest.raises(ValueError, match="script_id and client_secret are required"):
-            await AgenTruxToolkit.create()
+        """Path 1 still validates base_url when an access_token is supplied."""
+        monkeypatch.delenv("AGENTRUX_BASE_URL", raising=False)
+        with pytest.raises(ValueError, match="base_url is required"):
+            await AgenTruxToolkit.create(access_token="AT-explicit")
 
     @pytest.mark.asyncio
     async def test_create_raises_when_only_script_id_missing(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """create() raises ValueError when only script_id is missing."""
+        """Path 2 (client_credentials) requires both script_id AND client_secret.
+
+        Missing one half of the pair must NOT silently succeed; the
+        toolkit falls through to Path 3 (profile load) and surfaces the
+        device-flow hint when no credentials file exists.
+        """
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
         monkeypatch.delenv("AGENTRUX_SCRIPT_ID", raising=False)
         monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "secret-abc")
         monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
+        from pathlib import Path as _Path
+        import agentrux_agent_tools.toolkit as _tk
+        monkeypatch.setattr(
+            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+        )
 
-        with pytest.raises(ValueError, match="script_id and client_secret are required"):
+        with pytest.raises(ValueError, match="No credentials found"):
             await AgenTruxToolkit.create()
 
     @pytest.mark.asyncio
     async def test_create_raises_when_only_client_secret_missing(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """create() raises ValueError when only client_secret is missing."""
+        """Path 2 (client_credentials) requires both script_id AND client_secret."""
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
         monkeypatch.setenv("AGENTRUX_SCRIPT_ID", "script-123")
         monkeypatch.delenv("AGENTRUX_CLIENT_SECRET", raising=False)
         monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
+        from pathlib import Path as _Path
+        import agentrux_agent_tools.toolkit as _tk
+        monkeypatch.setattr(
+            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+        )
 
-        with pytest.raises(ValueError, match="script_id and client_secret are required"):
+        with pytest.raises(ValueError, match="No credentials found"):
             await AgenTruxToolkit.create()
 
 

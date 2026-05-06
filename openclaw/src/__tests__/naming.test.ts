@@ -21,41 +21,6 @@ const credentialsSource = fs.readFileSync(CREDENTIALS_PATH, "utf-8");
 const source = indexSource + "\n" + credentialsSource;
 
 // ---------------------------------------------------------------------------
-// Capture tool registrations by mocking the api object
-// ---------------------------------------------------------------------------
-
-interface RegisteredTool {
-  name: string;
-  description: string;
-  parameters: any;
-  execute: (...args: any[]) => Promise<any>;
-}
-
-function captureTools(): RegisteredTool[] {
-  const tools: RegisteredTool[] = [];
-  const fakeApi = {
-    registerTool(def: any, _opts?: any) {
-      tools.push(def);
-    },
-  };
-
-  // Import the default export and invoke it with our fake api.
-  // We need to isolate the module to avoid side effects from credential loading.
-  jest.isolateModules(() => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const pluginModule = require("../index");
-    const register = pluginModule.default || pluginModule;
-    register(fakeApi);
-  });
-
-  return tools;
-}
-
-function findTool(tools: RegisteredTool[], name: string) {
-  return tools.find((t) => t.name === name);
-}
-
-// ---------------------------------------------------------------------------
 // Credential interface
 // ---------------------------------------------------------------------------
 
@@ -69,33 +34,21 @@ describe("Credentials interface", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Activate tool parameter naming
+// Activation flow removed
 // ---------------------------------------------------------------------------
 
-describe("Activate tool", () => {
-  let tools: RegisteredTool[];
-  let activateTool: RegisteredTool | undefined;
-
-  beforeAll(() => {
-    tools = captureTools();
-    activateTool = findTool(tools, "agentrux_activate");
+describe("Activation flow removed", () => {
+  test("agentrux_activate tool no longer declared in source", () => {
+    expect(indexSource).not.toContain('name: "agentrux_activate"');
+    expect(indexSource).not.toContain("'agentrux_activate'");
   });
 
-  test("activate tool exists", () => {
-    expect(activateTool).toBeDefined();
-  });
-
-  test("parameter is activation_code (not token)", () => {
-    const props = activateTool!.parameters.properties;
-    expect(props).toHaveProperty("activation_code");
-    // "token" should not be the parameter name for activation
-    expect(props).not.toHaveProperty("activation_token");
-  });
-
-  test("activation_code description references ac_ prefix", () => {
-    const desc = activateTool!.parameters.properties.activation_code.description;
-    expect(desc).toContain("ac_");
-    expect(desc).not.toContain("atk_");
+  test("source no longer calls retired activation endpoint", () => {
+    // The bare ``/auth/activate`` string would mean the plugin still
+    // tries to talk to the deleted endpoint. Tolerate the prose
+    // mention of "activation" / "activation-code era" in comments.
+    expect(indexSource).not.toMatch(/["`']\/auth\/activate["`']/);
+    expect(indexSource).not.toMatch(/POST.*\/auth\/activate/);
   });
 });
 

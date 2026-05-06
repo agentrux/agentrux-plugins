@@ -7,7 +7,7 @@ from agentrux.sdk.pipeline import MessagePipeline
 from agentrux.sdk.gap_detector import GapDetector, GapState, FillResult
 from agentrux.sdk.checkpoint import CheckpointStore, FileCheckpointStore, CheckpointStats
 from agentrux.sdk.reconnect import ExponentialBackoff
-from agentrux.sdk.client import AgenTruxAPIClient
+from agentrux.sdk.client import AgenTruxAPIClient, TokenBundle, TokenRefresher
 from agentrux.sdk.sse_client import SSEClient
 from agentrux.sdk.pull_client import PullClient
 from agentrux.sdk.hybrid_consumer import HybridConsumer
@@ -28,6 +28,8 @@ __all__ = [
     "CheckpointStats",
     "ExponentialBackoff",
     "AgenTruxAPIClient",
+    "TokenBundle",
+    "TokenRefresher",
     "SSEClient",
     "PullClient",
     "HybridConsumer",

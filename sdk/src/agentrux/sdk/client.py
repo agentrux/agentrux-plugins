@@ -5,7 +5,8 @@ import base64
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Protocol
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 import httpx
 
@@ -14,31 +15,88 @@ from agentrux.sdk.errors import TokenExpiredError
 logger = logging.getLogger("agentrux.sdk.client")
 
 
-class TokenRefresher(Protocol):
-    """Protocol for JWT auto-refresh implementations."""
+@dataclass(frozen=True)
+class TokenBundle:
+    """The full payload of a successful refresh: access + refresh + expiry.
 
-    async def refresh(self, current_token: str, refresh_token: str) -> tuple[str, str]:
-        """Return new (access_token, refresh_token)."""
+    Carries enough state for a persistence layer (e.g. the ``agentrux``
+    CLI's ``~/.agentrux/credentials`` writer) to rebuild what the next
+    process needs without re-decoding the JWT.
+    """
+
+    access_token: str
+    refresh_token: str
+    expires_at: int  # unix epoch seconds
+
+
+# ``on_token_refreshed`` may be sync or async. We await the result either
+# way, so a sync callable just needs to return a non-awaitable.
+TokenRefreshedHook = Callable[[TokenBundle], Awaitable[None] | None]
+
+
+class TokenRefresher(Protocol):
+    """Protocol for JWT auto-refresh implementations.
+
+    Implementations exchange the long-lived ``refresh_token`` for a new
+    ``access_token`` (and possibly a rotated ``refresh_token``) and
+    return the result as a ``TokenBundle``. Returning the bundle rather
+    than a tuple keeps the contract self-describing as we add fields
+    (``expires_at`` already, ``scope`` later) without breaking callers.
+    """
+
+    async def refresh(self, current_token: str, refresh_token: str) -> TokenBundle:
         ...
 
 
 class DefaultTokenRefresher:
-    """Standard AgenTrux refresh endpoint: POST /auth/refresh."""
+    """OAuth 2.1 refresh: POST /oauth/token with grant_type=refresh_token.
 
-    def __init__(self, base_url: str):
+    Replaces the old `/auth/refresh` JSON endpoint. Per RFC 6749 §6 and
+    AgenTrux spec §22.2 (line 185-212), the body MUST be
+    ``application/x-www-form-urlencoded`` and MUST include ``client_id``.
+    Public DCR clients (``oauth-client_<uuid>``, the device-flow CLI
+    case) authenticate with no client_secret — PKCE / DCR proves
+    identity. Server rotates the refresh_token on every successful call
+    (single-use); the new value is in the response body.
+    """
+
+    def __init__(self, base_url: str, oauth_client_id: str):
+        if not oauth_client_id:
+            # Caller error — caught here so we surface it before the
+            # network round-trip.
+            raise ValueError(
+                "DefaultTokenRefresher requires oauth_client_id (the DCR-"
+                "registered client_id, e.g. 'oauth-client_<uuid>'). "
+                "client_credentials grants do not issue refresh tokens "
+                "and so do not need a refresher."
+            )
         self._base_url = base_url.rstrip("/")
+        self._oauth_client_id = oauth_client_id
 
-    async def refresh(self, current_token: str, refresh_token: str) -> tuple[str, str]:
+    async def refresh(self, current_token: str, refresh_token: str) -> TokenBundle:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{self._base_url}/auth/refresh",
-                json={"refresh_token": refresh_token},
-                headers={"Authorization": f"Bearer {current_token}"},
+                f"{self._base_url}/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": self._oauth_client_id,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=10.0,
             )
             resp.raise_for_status()
             data = resp.json()
-            return data["access_token"], data["refresh_token"]
+            access = data["access_token"]
+            # Server SHOULD rotate refresh_token; if it omits the field
+            # (RFC 6749 §6 allows reuse), keep the previous one.
+            new_refresh = data.get("refresh_token") or refresh_token
+            expires_in = int(data.get("expires_in", 3600) or 3600)
+            return TokenBundle(
+                access_token=access,
+                refresh_token=new_refresh,
+                expires_at=int(time.time()) + expires_in,
+            )
 
 
 class AgenTruxAPIClient:
@@ -50,7 +108,9 @@ class AgenTruxAPIClient:
         token: str,
         *,
         refresh_token: str | None = None,
+        oauth_client_id: str | None = None,
         token_refresher: TokenRefresher | None = None,
+        on_token_refreshed: TokenRefreshedHook | None = None,
         timeout_s: float = 30.0,
         max_retries: int = 3,
         max_payload_bytes: int = 10 * 1024 * 1024,  # 10MB
@@ -58,9 +118,27 @@ class AgenTruxAPIClient:
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._refresh_token = refresh_token
-        self._token_refresher = token_refresher or (
-            DefaultTokenRefresher(base_url) if refresh_token else None
-        )
+        self._oauth_client_id = oauth_client_id
+        # The default refresher requires oauth_client_id (per OAuth 2.1
+        # spec §6 — refresh_token grant MUST carry client_id). If the
+        # caller passed a refresh_token without an oauth_client_id we
+        # leave the refresher unset rather than build a broken default
+        # that would fail on first refresh; the caller can either supply
+        # a custom refresher or accept that the access_token is
+        # short-lived (e.g. a Path-1 explicit access_token use).
+        if token_refresher is not None:
+            self._token_refresher: TokenRefresher | None = token_refresher
+        elif refresh_token and oauth_client_id:
+            self._token_refresher = DefaultTokenRefresher(base_url, oauth_client_id)
+        else:
+            self._token_refresher = None
+            if refresh_token and not oauth_client_id:
+                logger.warning(
+                    "AgenTruxAPIClient received refresh_token but no "
+                    "oauth_client_id; auto-refresh disabled. Pass "
+                    "oauth_client_id= or supply a custom token_refresher."
+                )
+        self._on_token_refreshed = on_token_refreshed
         self._timeout = timeout_s
         self._max_retries = max_retries
         self._max_payload_bytes = max_payload_bytes
@@ -89,11 +167,15 @@ class AgenTruxAPIClient:
             # Need refresh
             if self._token_refresher and self._refresh_token:
                 logger.info("JWT expiring in %.0fs, refreshing...", remaining)
-                new_token, new_refresh = await self._token_refresher.refresh(
+                bundle = await self._token_refresher.refresh(
                     self._token, self._refresh_token
                 )
-                self._token = new_token
-                self._refresh_token = new_refresh
+                self._token = bundle.access_token
+                self._refresh_token = bundle.refresh_token
+                if self._on_token_refreshed is not None:
+                    res = self._on_token_refreshed(bundle)
+                    if res is not None:
+                        await res
                 logger.info("JWT refreshed successfully")
             elif remaining <= 0:
                 raise TokenExpiredError("JWT expired and no refresh mechanism available")
@@ -121,9 +203,15 @@ class AgenTruxAPIClient:
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401 and self._token_refresher and self._refresh_token:
                     try:
-                        self._token, self._refresh_token = await self._token_refresher.refresh(
+                        bundle = await self._token_refresher.refresh(
                             self._token, self._refresh_token
                         )
+                        self._token = bundle.access_token
+                        self._refresh_token = bundle.refresh_token
+                        if self._on_token_refreshed is not None:
+                            res = self._on_token_refreshed(bundle)
+                            if res is not None:
+                                await res
                         continue
                     except Exception:
                         raise TokenExpiredError("Token refresh failed") from e

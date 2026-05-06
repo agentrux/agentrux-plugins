@@ -19,7 +19,7 @@
  * Credentials: ~/.agentrux/credentials.json (0600)
  */
 
-import { loadCredentials, saveCredentials, type Credentials } from "./credentials";
+import { loadCredentials, type Credentials } from "./credentials";
 import { httpJson, authRequest, invalidateToken, uploadFile } from "./http-client";
 import { agentruxGateway, type AgenTruxAccount } from "./gateway";
 import { setPluginRuntime } from "./runtime";
@@ -669,39 +669,12 @@ const plugin = {
   // TOOLS
   // =======================================================================
 
-  api.registerTool(
-    {
-      name: "agentrux_activate",
-      description:
-        "Connect to AgenTrux with a one-time activation code. " +
-        "Returns script_id, client_secret, and available topics.",
-      parameters: {
-        type: "object",
-        properties: {
-          activation_code: { type: "string", description: "One-time activation code (ac_...)" },
-          base_url: { type: "string", description: "AgenTrux API URL (default: https://api.agentrux.com)" },
-        },
-        required: ["activation_code"],
-      },
-      async execute(_id: string, params: { activation_code: string; base_url?: string }) {
-        const baseUrl = params.base_url || "https://api.agentrux.com";
-        const r = await httpJson("POST", `${baseUrl}/auth/activate`, {
-          activation_code: params.activation_code,
-        });
-        if (r.status !== 200) {
-          return { content: [{ type: "text", text: `Activation failed: ${JSON.stringify(r.data)}` }] };
-        }
-        const creds = { base_url: baseUrl, script_id: r.data.script_id, clientSecret: r.data.client_secret };
-        saveCredentials(creds);
-        credentials = creds;
-        const grants = (r.data.grants || []).map((g: any) => `  - ${g.topic_id} (${g.action})`).join("\n");
-        return {
-          content: [{ type: "text", text: `Connected to AgenTrux!\nScript ID: ${r.data.script_id}\nTopics:\n${grants}` }],
-        };
-      },
-    },
-    { optional: true },
-  );
+  // The legacy ``agentrux_activate`` tool was removed when the AgenTrux
+  // backend retired its activation-code exchange (commit 5fbe7be2).
+  // Credentials are now provisioned outside the plugin — either via
+  // the SDK CLI's ``agentrux login`` (OAuth 2.1 device flow) or by
+  // issuing a Script credential in Console and writing base_url +
+  // script_id + clientSecret to ~/.agentrux/credentials.json by hand.
 
   // Data plane tools — available for non-ingress sessions (cron,
   // heartbeat, subagent, CLI). Blocked during ingress turns where
