@@ -73,6 +73,27 @@ sys.path.insert(0, str(BUILD_ROOT))
 from provider import agentrux_api, agentrux_tools  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _seed_discovery_cache():
+    """Bypass /.well-known network call in tests.
+
+    The provider now resolves OAuth endpoints via RFC 8414 discovery.
+    Pre-seeding the per-base_url cache with the expected layout keeps
+    the existing assertions (which check the legacy URL format) valid
+    while still exercising the discovery code path. Reset before each
+    test so a test that wants to assert discovery behaviour can clear
+    and re-seed without leaking state.
+    """
+    agentrux_tools._metadata_cache.clear()
+    for base in ("https://api.agentrux.com", "http://api.agentrux.com"):
+        agentrux_tools._metadata_cache[base] = {
+            "authorization_endpoint": f"{base}/oauth/authorize",
+            "token_endpoint": f"{base}/oauth/token",
+        }
+    yield
+    agentrux_tools._metadata_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # _is_url_allowed
 # ---------------------------------------------------------------------------
@@ -344,3 +365,59 @@ def test_oauth_refresh_falls_back_to_old_refresh_token():
             credentials={"refresh_token": "old"},
         )
     assert creds.credentials["refresh_token"] == "old"
+
+
+# ---------------------------------------------------------------------------
+# RFC 8414 discovery
+# ---------------------------------------------------------------------------
+
+def test_discovery_uses_well_known_endpoint():
+    """Provider follows authorization_endpoint from /.well-known."""
+    agentrux_tools._metadata_cache.clear()
+    discovery = MagicMock()
+    discovery.status_code = 200
+    discovery.json.return_value = {
+        "authorization_endpoint": "https://api.example.com/oauth/authorize",
+        "token_endpoint": "https://api.example.com/oauth/token",
+    }
+    with patch("provider.agentrux_tools.httpx.get", return_value=discovery) as g:
+        meta = agentrux_tools._discover_metadata("https://api.example.com")
+    assert g.call_args.args[0] == (
+        "https://api.example.com/.well-known/oauth-authorization-server"
+    )
+    assert meta["authorization_endpoint"] == "https://api.example.com/oauth/authorize"
+    # Cached: a second call hits the cache, no extra network call.
+    with patch("provider.agentrux_tools.httpx.get") as g2:
+        agentrux_tools._discover_metadata("https://api.example.com")
+        assert g2.call_count == 0
+
+
+def test_discovery_falls_back_on_well_known_outage():
+    """If /.well-known returns non-200 we keep going with the legacy layout."""
+    agentrux_tools._metadata_cache.clear()
+    discovery = MagicMock()
+    discovery.status_code = 503
+    with patch("provider.agentrux_tools.httpx.get", return_value=discovery):
+        meta = agentrux_tools._discover_metadata("https://api.fallback.test")
+    assert meta == {
+        "authorization_endpoint": "https://api.fallback.test/oauth/authorize",
+        "token_endpoint": "https://api.fallback.test/oauth/token",
+    }
+
+
+def test_authorize_url_follows_discovered_endpoint():
+    """Authorization URL goes wherever /.well-known said, not a hardcoded path."""
+    agentrux_tools._metadata_cache.clear()
+    agentrux_tools._metadata_cache["https://api.agentrux.com"] = {
+        "authorization_endpoint": "https://auth.future.agentrux.com/oauth/authorize",
+        "token_endpoint": "https://auth.future.agentrux.com/oauth/token",
+    }
+    p = agentrux_tools.AgentruxToolsProvider()
+    url = p._oauth_get_authorization_url(
+        redirect_uri="https://dify.example.com/cb",
+        system_credentials={
+            "base_url": "https://api.agentrux.com",
+            "client_id": "oauth-client_xyz",
+        },
+    )
+    assert url.startswith("https://auth.future.agentrux.com/oauth/authorize?")

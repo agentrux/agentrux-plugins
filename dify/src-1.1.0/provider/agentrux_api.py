@@ -71,8 +71,14 @@ def _client_credentials_token(base_url: str, client_id: str, client_secret: str)
     if cached and cached[1] > time.time() + 60:
         return cached[0]
 
+    # Resolve the token endpoint via RFC 8414 discovery so this code
+    # tracks any future endpoint moves at the AgenTrux backend without
+    # a plugin re-release. Cached per base_url inside agentrux_tools.
+    from .agentrux_tools import _discover_metadata
+    token_endpoint = _discover_metadata(base_url)["token_endpoint"]
+
     resp = httpx.post(
-        f"{base_url}/oauth/token",
+        token_endpoint,
         data={
             "grant_type": "client_credentials",
             "client_id": client_id,

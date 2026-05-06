@@ -55,6 +55,52 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+# ---------------------------------------------------------------------------
+# RFC 8414 metadata discovery
+# ---------------------------------------------------------------------------
+#
+# Plugins used to hardcode `{base_url}/oauth/authorize` and
+# `{base_url}/oauth/token`. Switching to RFC 8414
+# `/.well-known/oauth-authorization-server` discovery means the plugin
+# follows whatever URLs the AgenTrux backend advertises today —
+# including future moves like splitting the consent UI to a separate
+# host. The endpoints are cached per base_url for the process lifetime
+# (TTL implicit: discovery rarely changes; a Dify worker restart
+# refetches anyway).
+
+_metadata_cache: dict[str, dict[str, str]] = {}
+
+
+def _discover_metadata(base_url: str) -> dict[str, str]:
+    cached = _metadata_cache.get(base_url)
+    if cached is not None:
+        return cached
+    resp = httpx.get(
+        f"{base_url}/.well-known/oauth-authorization-server",
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        # Fall back to the legacy hardcoded layout so an outage of the
+        # well-known endpoint doesn't take down auth flows that already
+        # know where the endpoints live.
+        meta = {
+            "authorization_endpoint": f"{base_url}/oauth/authorize",
+            "token_endpoint": f"{base_url}/oauth/token",
+        }
+    else:
+        body = resp.json()
+        meta = {
+            "authorization_endpoint": body.get(
+                "authorization_endpoint", f"{base_url}/oauth/authorize",
+            ),
+            "token_endpoint": body.get(
+                "token_endpoint", f"{base_url}/oauth/token",
+            ),
+        }
+    _metadata_cache[base_url] = meta
+    return meta
+
+
 # In-process map: state -> code_verifier. Sufficient because Dify keeps the
 # user on the same plugin process between authorize and callback within a
 # single OAuth round-trip.
@@ -138,7 +184,8 @@ class AgentruxToolsProvider(ToolProvider):
             "code_challenge_method": "S256",
             "scope": "topic.read topic.write",
         }
-        return f"{base_url}/oauth/authorize?{urlencode(params)}"
+        meta = _discover_metadata(base_url)
+        return f"{meta['authorization_endpoint']}?{urlencode(params)}"
 
     def _oauth_get_credentials(
         self,
@@ -175,7 +222,8 @@ class AgentruxToolsProvider(ToolProvider):
         if client_secret:
             data["client_secret"] = client_secret
 
-        resp = httpx.post(f"{base_url}/oauth/token", data=data, timeout=10)
+        meta = _discover_metadata(base_url)
+        resp = httpx.post(meta["token_endpoint"], data=data, timeout=10)
         if resp.status_code != 200:
             raise ToolProviderOAuthError(
                 f"AgenTrux token exchange failed: HTTP {resp.status_code} {resp.text[:200]}"
@@ -208,7 +256,8 @@ class AgentruxToolsProvider(ToolProvider):
         if client_secret:
             data["client_secret"] = client_secret
 
-        resp = httpx.post(f"{base_url}/oauth/token", data=data, timeout=10)
+        meta = _discover_metadata(base_url)
+        resp = httpx.post(meta["token_endpoint"], data=data, timeout=10)
         if resp.status_code != 200:
             raise ToolProviderOAuthError(
                 f"AgenTrux refresh failed: HTTP {resp.status_code} {resp.text[:200]}"
