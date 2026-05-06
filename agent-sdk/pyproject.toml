@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentrux-agent-tools"
-version = "0.1.0b2"
+version = "0.2.0b1"
 description = "AI agent toolkit for AgenTrux - framework-agnostic function calling tools"
 readme = "README.md"
 license = "MIT"
@@ -18,6 +18,11 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+# `agentrux login` drives the OAuth Device Authorization Grant so users
+# don't have to copy/paste credentials manually. See cli.py.
+agentrux = "agentrux_agent_tools.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentrux_agent_tools"]

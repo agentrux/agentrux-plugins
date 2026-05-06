@@ -9,11 +9,26 @@ Usage::
     toolkit = await AgenTruxToolkit.create()
     tools   = toolkit.get_tools()           # list[dict] for LLM
     result  = await toolkit.execute("publish_event", {...})
+
+Auth resolution order (first match wins):
+  1. Explicit ``access_token=`` argument (or ``AGENTRUX_ACCESS_TOKEN`` env)
+  2. Explicit ``script_id`` + ``client_secret`` (legacy client_credentials,
+     also via ``AGENTRUX_SCRIPT_ID`` / ``AGENTRUX_CLIENT_SECRET`` env)
+  3. ``~/.agentrux/credentials`` written by ``agentrux login`` (RFC 8628
+     device flow). Profile defaults to "default", overridable via
+     ``profile=`` arg or ``AGENTRUX_PROFILE`` env. The toolkit reads
+     access_token + refresh_token straight out of the file.
+
+If none of those produce credentials, ``create()`` raises with a
+human-readable hint pointing at ``agentrux login``.
 """
 from __future__ import annotations
 
+import configparser
 import logging
 import os
+import time
+from pathlib import Path
 from typing import Any
 
 from agentrux.sdk.facade import AgenTruxClient
@@ -21,6 +36,37 @@ from agentrux.sdk.facade import AgenTruxClient
 from . import tools as tool_fns
 
 logger = logging.getLogger(__name__)
+
+
+_CREDENTIALS_PATH = Path.home() / ".agentrux" / "credentials"
+
+
+def _load_cli_profile(profile: str) -> dict[str, str] | None:
+    """Read tokens persisted by ``agentrux login`` for *profile*.
+
+    Returns None if the file or the profile is missing — callers fall
+    through to the legacy explicit-args path. Returning a tokens dict
+    instead of asserting "expires_at > now" lets the underlying
+    AgenTruxClient drive the refresh, which already knows how to swap
+    access_token via the refresh_token grant.
+    """
+    if not _CREDENTIALS_PATH.exists():
+        return None
+    cfg = configparser.ConfigParser()
+    cfg.read(_CREDENTIALS_PATH)
+    if profile not in cfg:
+        return None
+    sec = cfg[profile]
+    out = {
+        "base_url": sec.get("base_url", ""),
+        "script_id": sec.get("script_id", ""),
+        "access_token": sec.get("access_token", ""),
+        "refresh_token": sec.get("refresh_token", ""),
+        "expires_at": sec.get("expires_at", "0"),
+    }
+    if not out["access_token"]:
+        return None
+    return out
 
 # ── Tool definitions in OpenAI function-calling format ──────────────────
 
@@ -155,56 +201,97 @@ class AgenTruxToolkit:
         base_url: str | None = None,
         script_id: str | None = None,
         client_secret: str | None = None,
+        access_token: str | None = None,
+        profile: str | None = None,
         invite_code: str | None = None,
     ) -> AgenTruxToolkit:
         """Create an authenticated toolkit.
 
-        Parameters fall back to environment variables:
-
-        - ``AGENTRUX_BASE_URL``
-        - ``AGENTRUX_SCRIPT_ID``
-        - ``AGENTRUX_CLIENT_SECRET``
-        - ``AGENTRUX_INVITE_CODE`` (optional)
+        Parameters fall back to environment variables, then to the
+        device-flow credentials written by ``agentrux login``. See the
+        module docstring for the resolution order.
         """
         base_url = base_url or os.environ.get("AGENTRUX_BASE_URL", "")
         script_id = script_id or os.environ.get("AGENTRUX_SCRIPT_ID", "")
         client_secret = client_secret or os.environ.get("AGENTRUX_CLIENT_SECRET", "")
+        access_token = access_token or os.environ.get("AGENTRUX_ACCESS_TOKEN", "")
         invite_code = invite_code or os.environ.get("AGENTRUX_INVITE_CODE")
+        profile = profile or os.environ.get("AGENTRUX_PROFILE", "default")
 
-        if not base_url:
-            raise ValueError(
-                "base_url is required. Pass it directly or set AGENTRUX_BASE_URL."
+        # Path 1: an explicit access_token wins outright. No refresh
+        # token is wired in this path because the caller is signalling
+        # they manage rotation themselves.
+        if access_token:
+            if not base_url:
+                raise ValueError(
+                    "base_url is required when passing access_token. "
+                    "Pass it directly or set AGENTRUX_BASE_URL."
+                )
+            client = AgenTruxClient(base_url=base_url, token=access_token)
+            logger.info("AgenTruxToolkit created from explicit access_token")
+            return cls(client)
+
+        # Path 2: legacy client_credentials. Used by CI / unattended
+        # installs that issued a long-lived client_secret in Console.
+        if script_id and client_secret:
+            if not base_url:
+                raise ValueError(
+                    "base_url is required. Pass it directly or set AGENTRUX_BASE_URL."
+                )
+            temp_client = AgenTruxClient(base_url=base_url, token="")
+            if invite_code:
+                logger.info("Redeeming share code for script %s", script_id)
+                await temp_client.redeem_grant(
+                    invite_code=invite_code,
+                    script_id=script_id,
+                    client_secret=client_secret,
+                )
+            token_data = await temp_client.get_token(script_id, client_secret)
+            await temp_client.close()
+            client = AgenTruxClient(
+                base_url=base_url,
+                token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"),
             )
-        if not script_id or not client_secret:
-            raise ValueError(
-                "script_id and client_secret are required. Pass them directly or set "
-                "AGENTRUX_SCRIPT_ID / AGENTRUX_CLIENT_SECRET."
+            logger.info("AgenTruxToolkit created via client_credentials for script %s", script_id)
+            return cls(client)
+
+        # Path 3: device-flow profile from ``agentrux login``.
+        creds = _load_cli_profile(profile)
+        if creds is not None:
+            # The CLI persisted a Bearer access_token + a refresh_token.
+            # Use the persisted base_url unless the caller overrode it.
+            chosen_base_url = base_url or creds["base_url"]
+            if not chosen_base_url:
+                raise ValueError(
+                    f"profile {profile!r} in {_CREDENTIALS_PATH} has no base_url"
+                )
+            try:
+                expired = int(creds.get("expires_at") or 0) <= int(time.time())
+            except ValueError:
+                expired = False
+            if expired:
+                logger.info(
+                    "AgenTruxToolkit: profile %s access_token expired, "
+                    "client will refresh via the saved refresh_token", profile,
+                )
+            client = AgenTruxClient(
+                base_url=chosen_base_url,
+                token=creds["access_token"],
+                refresh_token=creds["refresh_token"] or None,
             )
-
-        # Create a temporary unauthenticated client for the auth endpoints
-        temp_client = AgenTruxClient(base_url=base_url, token="")
-
-        # Redeem share code if provided
-        if invite_code:
-            logger.info("Redeeming share code for script %s", script_id)
-            await temp_client.redeem_grant(
-                invite_code=invite_code,
-                script_id=script_id,
-                client_secret=client_secret,
+            logger.info(
+                "AgenTruxToolkit created from %s [%s] for script %s",
+                _CREDENTIALS_PATH, profile, creds["script_id"] or "(unknown)",
             )
+            return cls(client)
 
-        # Obtain JWT
-        token_data = await temp_client.get_token(script_id, client_secret)
-        await temp_client.close()
-
-        client = AgenTruxClient(
-            base_url=base_url,
-            token=token_data["access_token"],
-            refresh_token=token_data.get("refresh_token"),
+        raise ValueError(
+            "No credentials found. Either:\n"
+            "  - run `agentrux login` to authenticate via OAuth device flow, OR\n"
+            "  - set AGENTRUX_BASE_URL + AGENTRUX_SCRIPT_ID + AGENTRUX_CLIENT_SECRET, OR\n"
+            "  - pass access_token=, script_id+client_secret=, or profile= directly."
         )
-
-        logger.info("AgenTruxToolkit created for script %s", script_id)
-        return cls(client)
 
     # ── Tool definitions ─────────────────────────────────────────────────
 
