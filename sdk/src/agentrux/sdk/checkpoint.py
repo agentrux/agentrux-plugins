@@ -1,15 +1,18 @@
-"""CheckpointStore - Persists last processed sequence_no per topic.
-
-See doc/詳細設計/05_ビルディングブロック/11_PullPubSub_SDK詳細設計.md §11.
+"""CheckpointStore - Persists (sequence_number, event_id) per topic.
 
 Design summary:
-- JSONL append-only file (one record per save)
-- fsync=True by default (durability over throughput)
+- JSONL append-only file (one record per save).
+- fsync=True by default (durability over throughput).
 - Separate <path>.lock file for fcntl.flock (independent lifecycle from
-  the data file, so reset()/recreate doesn't break the lock)
-- Strict in-order: save() raises CheckpointOrderError on backward seq
+  the data file, so reset() doesn't break the lock).
+- Strict in-order: save() raises CheckpointOrderError on backward seq.
 - Save timing: caller invokes save() AFTER the user callback completes
-  successfully — this is the at-least-once guarantee
+  successfully — at-least-once guarantee.
+
+v0.3 breaking changes:
+- Field rename `sequence_no` → `sequence_number` (matches server schema).
+- Records using the legacy `sequence_no` key are silently skipped on
+  load (with a warning) so a v0.2-era file becomes "no checkpoint".
 """
 from __future__ import annotations
 
@@ -38,19 +41,21 @@ class CheckpointStats:
 
 
 class CheckpointStore(ABC):
-    """Persists (sequence_no, event_id) per topic across process restarts."""
+    """Persists (sequence_number, event_id) per topic across process restarts."""
 
     @abstractmethod
-    async def save(self, topic_id: str, sequence_no: int, event_id: str) -> None:
+    async def save(
+        self, topic_id: str, sequence_number: int, event_id: str
+    ) -> None:
         """Record the latest processed event. Call AFTER callback success.
 
-        Raises CheckpointOrderError if sequence_no is older than the last
-        successful save for the same topic_id.
+        Raises CheckpointOrderError if sequence_number is older than the
+        last successful save for the same topic_id.
         """
 
     @abstractmethod
     async def load(self, topic_id: str) -> tuple[int, str] | None:
-        """Return (sequence_no, event_id) for the topic, or None."""
+        """Return (sequence_number, event_id) for the topic, or None."""
 
     @abstractmethod
     async def reset(self, topic_id: str) -> None:
@@ -65,10 +70,11 @@ class FileCheckpointStore(CheckpointStore):
     """JSONL append-only file-based checkpoint store.
 
     File format (one record per line):
-        {"topic_id": "...", "sequence_no": 42, "event_id": "...", "ts": 1.23}
+        {"topic_id":"top_<uuid>","sequence_number":42,"event_id":"evt_<uuid>","ts":1.23}
 
     On startup, the file is scanned and the latest record per topic_id is
-    cached in memory.
+    cached in memory. Legacy v0.2 records (using `sequence_no`) are
+    skipped with a warning.
     """
 
     def __init__(
@@ -76,7 +82,7 @@ class FileCheckpointStore(CheckpointStore):
         path: str | Path,
         *,
         fsync: bool = True,
-    ):
+    ) -> None:
         self._path = Path(path)
         self._lock_path = Path(str(self._path) + ".lock")
         self._fsync = fsync
@@ -94,7 +100,6 @@ class FileCheckpointStore(CheckpointStore):
     # --- Process-level lock (separate lockfile) ---
 
     def _acquire_process_lock(self) -> None:
-        # Ensure parent dir exists
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR, 0o600)
@@ -109,7 +114,6 @@ class FileCheckpointStore(CheckpointStore):
             raise CheckpointLockedError(
                 f"Checkpoint lock held by another process: {self._lock_path}"
             ) from e
-        # Best-effort: write current pid for debugging
         try:
             os.ftruncate(fd, 0)
             os.write(fd, str(os.getpid()).encode())
@@ -136,7 +140,7 @@ class FileCheckpointStore(CheckpointStore):
         if not self._path.exists():
             return
         try:
-            with open(self._path, "r") as f:
+            with open(self._path) as f:
                 for lineno, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
@@ -147,30 +151,41 @@ class FileCheckpointStore(CheckpointStore):
                         self._parse_errors += 1
                         logger.warning(
                             "checkpoint: skipping malformed line %d in %s",
-                            lineno, self._path,
+                            lineno,
+                            self._path,
                         )
                         continue
                     topic_id = rec.get("topic_id")
-                    seq = rec.get("sequence_no")
+                    seq = rec.get("sequence_number")
                     eid = rec.get("event_id")
                     tombstone = rec.get("tombstone", False)
                     if not isinstance(topic_id, str):
                         self._parse_errors += 1
                         logger.warning(
-                            "checkpoint: skipping invalid record at line %d", lineno,
+                            "checkpoint: skipping invalid record at line %d", lineno
                         )
                         continue
                     if tombstone:
-                        # reset() marker — forget any prior state
                         self._cache.pop(topic_id, None)
+                        continue
+                    if seq is None and "sequence_no" in rec:
+                        # Legacy v0.2 record — skip & warn (server contract
+                        # changed; the seq numbering may not even be
+                        # comparable across versions).
+                        self._parse_errors += 1
+                        logger.warning(
+                            "checkpoint: legacy v0.2 record at line %d uses "
+                            "'sequence_no'; skipping (rebuild checkpoint from "
+                            "live stream).",
+                            lineno,
+                        )
                         continue
                     if not isinstance(seq, int) or not isinstance(eid, str):
                         self._parse_errors += 1
                         logger.warning(
-                            "checkpoint: skipping invalid record at line %d", lineno,
+                            "checkpoint: skipping invalid record at line %d", lineno
                         )
                         continue
-                    # Append-only with monotonic seq → last record wins
                     self._cache[topic_id] = (seq, eid)
         except OSError as e:
             logger.warning("checkpoint: cannot read %s: %s", self._path, e)
@@ -178,9 +193,7 @@ class FileCheckpointStore(CheckpointStore):
     def _append_record_sync(self, record: dict) -> None:
         """Synchronous append + fsync (run in a thread)."""
         line = json.dumps(record, separators=(",", ":")) + "\n"
-        # Ensure parent dir exists
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Open in append mode; fsync after write if requested
         fd = os.open(
             str(self._path),
             os.O_WRONLY | os.O_CREAT | os.O_APPEND,
@@ -195,24 +208,26 @@ class FileCheckpointStore(CheckpointStore):
 
     # --- Public API ---
 
-    async def save(self, topic_id: str, sequence_no: int, event_id: str) -> None:
+    async def save(
+        self, topic_id: str, sequence_number: int, event_id: str
+    ) -> None:
         if self._closed:
             raise RuntimeError("CheckpointStore is closed")
         async with self._write_lock:
             cur = self._cache.get(topic_id)
-            if cur is not None and sequence_no < cur[0]:
+            if cur is not None and sequence_number < cur[0]:
                 raise CheckpointOrderError(
                     f"save() backward: topic={topic_id} "
-                    f"current={cur[0]} requested={sequence_no}"
+                    f"current={cur[0]} requested={sequence_number}"
                 )
             record = {
                 "topic_id": topic_id,
-                "sequence_no": sequence_no,
+                "sequence_number": sequence_number,
                 "event_id": event_id,
                 "ts": time.time(),
             }
             await asyncio.to_thread(self._append_record_sync, record)
-            self._cache[topic_id] = (sequence_no, event_id)
+            self._cache[topic_id] = (sequence_number, event_id)
             self._saves_total += 1
 
     async def load(self, topic_id: str) -> tuple[int, str] | None:
@@ -225,12 +240,10 @@ class FileCheckpointStore(CheckpointStore):
         if self._closed:
             raise RuntimeError("CheckpointStore is closed")
         async with self._write_lock:
-            if topic_id in self._cache:
-                del self._cache[topic_id]
-            # Append a tombstone so the on-disk view also forgets it
+            self._cache.pop(topic_id, None)
             record = {
                 "topic_id": topic_id,
-                "sequence_no": -1,
+                "sequence_number": -1,
                 "event_id": "",
                 "ts": time.time(),
                 "tombstone": True,

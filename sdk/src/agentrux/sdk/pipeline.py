@@ -73,6 +73,7 @@ class MessagePipeline:
                 try:
                     result = await self._gap_detector.fill(
                         self._topic_id, start, end,
+                        before_event_id=self._reorder.last_delivered_event_id,
                     )
                 except Exception as e:
                     logger.warning("Gap fill error %d-%d: %s", start, end, e)

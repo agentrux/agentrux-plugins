@@ -29,6 +29,10 @@ class ReorderBuffer:
         self._window_size = window_size
         self._max_delay_ms = max_delay_ms
         self._stats = ReorderBufferStats()
+        # event_id of the most recently *delivered* message; used by
+        # GapDetector to query `list_events(after=...)` for the seqs
+        # immediately following a gap.
+        self._last_delivered_event_id: str | None = None
 
     def insert(self, msg: MessageEnvelope) -> list[MessageEnvelope]:
         """Insert message and return any deliverable messages in order.
@@ -40,7 +44,7 @@ class ReorderBuffer:
         a sequence lower than expected are dropped as "already delivered".
         For random-order use cases, call set_initial_sequence(min_seq) first.
         """
-        seq = msg.sequence_no
+        seq = msg.sequence_number
         self._stats.messages_inserted += 1
 
         # Initialize next_expected on first message
@@ -153,7 +157,18 @@ class ReorderBuffer:
             result.append(msg)
             self._next_expected_seq += 1
             self._stats.messages_delivered += 1
+        if result:
+            self._last_delivered_event_id = result[-1].event_id
         return result
+
+    @property
+    def last_delivered_event_id(self) -> str | None:
+        """event_id of the most recently delivered message, or None.
+
+        GapDetector uses this as the `after=` cursor when probing the
+        list_events endpoint for events in a gap range.
+        """
+        return self._last_delivered_event_id
 
     @property
     def pending_count(self) -> int:

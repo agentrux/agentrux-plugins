@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentrux-sdk"
-version = "0.2.0b1"
+version = "0.3.0b1"
 description = "Python SDK for AgenTrux — A2A authenticated pub/sub client"
 readme = "README.md"
 license = "MIT"
@@ -22,3 +22,23 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentrux"]
+
+[tool.hatch.build.targets.sdist]
+# Source distribution must NOT include tests/ — that would publish
+# internal test fixtures (mock servers, attack payloads, helper
+# pyramids) to PyPI, violating CLAUDE.md §publish safety rule b.
+include = [
+    "src/agentrux",
+    "README.md",
+    "pyproject.toml",
+    "LICENSE",
+]
+exclude = [
+    "tests/",
+    "**/__pycache__/",
+    "**/*.pyc",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
