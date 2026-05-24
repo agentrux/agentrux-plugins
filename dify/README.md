@@ -4,6 +4,13 @@ Dify (Cloud / self-hosted ≥ 1.10) から AgenTrux PubSub にアクセスする
 
 > 日本語 README はこのファイル。English version: [`README.en.md`](./README.en.md)
 
+## v1.1.0 の変更点
+
+`v1.1.0` 以降は **`/.well-known/oauth-authorization-server` (RFC 8414)** で
+`authorization_endpoint` / `token_endpoint` を動的に discover するようになりました。
+URL を plugin 側でハードコードしていないので、将来 AgenTrux のバックエンド URL が
+移動しても plugin の再リリースなしで透過的に追従します。
+
 ## v1.0.0 の変更点
 
 `v0.x` の **Activation Code (`ac_...`) 方式は廃止** し、**OAuth 2.1** ベースに切り替えました。
@@ -11,14 +18,15 @@ Dify (Cloud / self-hosted ≥ 1.10) から AgenTrux PubSub にアクセスする
 | Plugin version | 認証方式 | サーバー |
 |----------------|----------|----------|
 | `v0.x`         | Activation Code → `/auth/activate` (legacy)     | 旧認証層（停止済み） |
-| **`v1.0.0`**   | OAuth 2.1 (Auth Code + PKCE) もしくは `client_credentials` | 新認証層（本番） |
+| `v1.0.0`       | OAuth 2.1 (Auth Code + PKCE) もしくは `client_credentials`、endpoint ハードコード | 新認証層（本番） |
+| **`v1.1.0`**   | OAuth 2.1 + RFC 8414 metadata discovery | 新認証層（本番） |
 
-旧版 `v0.2.x` / `v0.3.x` の `.difypkg` は backward-compat のため同梱していますが、新認証層では動作しません。**新規導入は `v1.0.0` をお使いください**。
+旧版 `v0.2.x` / `v0.3.x` の `.difypkg` は backward-compat のため同梱していますが、新認証層では動作しません。**新規導入は `v1.1.0` をお使いください**。
 
 ## インストール
 
 1. Dify の **Studio → Tools → Install Plugin → Local Package**
-2. `dify-agentrux-tools-1.0.0.difypkg` をアップロード
+2. `dify-agentrux-tools-1.1.0.difypkg` をアップロード
 3. プラグイン詳細画面で **Authorize / Connect** をクリック
 
 ## 認証方式: 2 通り

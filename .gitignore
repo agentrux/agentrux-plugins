@@ -5,3 +5,9 @@
 **/package-lock.json
 __pycache__/
 *.pyc
+
+# npm dependencies
+**/node_modules/
+
+# Dify .difypkg extraction artifacts
+dify/.extract_*/
