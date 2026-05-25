@@ -1,0 +1,222 @@
+# ============================================================================
+# Dify Pipeline: Topic2 (OpenClaw result) -> transform -> Topic3 (Claude response)
+# ============================================================================
+#
+# Imports into Dify Studio via Studio -> Create -> Import DSL File.
+# Requires:
+#   * agentrux-trigger plugin v0.4.0+  (Topic2 subscribe)
+#   * agentrux-tools   plugin v1.1.0+  (Topic3 publish)
+#   * Dify >= 1.10                     (trigger-based pipelines)
+#
+# Two provider connections must be configured in Dify BEFORE importing:
+#
+#   1. AgenTrux Trigger    -> AC with READ grant on Topic2
+#      (Trigger plugin still uses Activation Code based subscription per
+#      agentrux_trigger.yaml subscription_schema.)
+#
+#   2. AgenTrux Tools      -> OAuth 2.1 client (PKCE) OR script credentials
+#      with WRITE grant on Topic3.
+#
+# After import, open the workflow and:
+#   - Trigger node: select your AgenTrux Trigger connection, paste Topic2 AC
+#     in the subscription form, set delivery_mode=sse (NAT-friendly default)
+#   - Publish node: select your AgenTrux Tools connection and pick Topic3
+#     from the dynamic-select dropdown
+#
+# DSL schema note: Dify's app DSL evolves across versions. If import fails,
+# the most likely culprits are (a) the trigger node `type` field, which
+# Dify 1.10 sometimes calls `trigger` and 1.11+ calls `webhook-trigger`,
+# and (b) plugin tool IDs (`provider_name`), which include the plugin author
+# prefix `agentrux/...` on the marketplace but may be unprefixed for locally
+# installed plugins.
+# ============================================================================
+
+app:
+  name: "AgenTrux Topic2 -> Topic3 Bridge"
+  description: "Subscribes to Topic2, tags the payload, republishes to Topic3."
+  icon: "🌀"
+  icon_background: "#E0F2FE"
+  mode: workflow
+  use_icon_as_answer_icon: false
+
+kind: app
+version: 0.1.5
+
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      image:
+        enabled: false
+    opening_statement: ""
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+
+  graph:
+    # ------------------------------------------------------------------ nodes
+    nodes:
+      # 1) TRIGGER: AgenTrux new_event on Topic2
+      - id: trigger_topic2
+        type: custom
+        position: { x: 80, y: 200 }
+        positionAbsolute: { x: 80, y: 200 }
+        width: 244
+        height: 120
+        data:
+          type: trigger
+          title: "Topic2 New Event"
+          # Plugin trigger reference.
+          # Format: <author>/<plugin_name>/<trigger_name>
+          provider_id: "agentrux/agentrux-trigger/agentrux-trigger"
+          trigger_name: "new_event"
+          # Per-event-parameters defined in trigger/events/new_event/new_event.yaml.
+          # Leave event_type_filter empty to receive every event on Topic2,
+          # or set to e.g. "openclaw.result" to limit to OpenClaw responses.
+          parameters:
+            event_type_filter: "openclaw.result"
+          # Trigger output schema (mirrors new_event.yaml output_schema):
+          #   event_id, sequence_no, event_type, topic_id, message,
+          #   request_id, conversation_key, payload_json, attachment_urls
+          output_variables:
+            - { variable: event_id,          type: string }
+            - { variable: sequence_no,       type: number }
+            - { variable: event_type,        type: string }
+            - { variable: topic_id,          type: string }
+            - { variable: message,           type: string }
+            - { variable: request_id,        type: string }
+            - { variable: conversation_key,  type: string }
+            - { variable: payload_json,      type: string }
+            - { variable: attachment_urls,   type: string }
+
+      # 2) CODE: dummy passthrough + tag (processed_by / processed_at)
+      - id: transform
+        type: custom
+        position: { x: 420, y: 200 }
+        positionAbsolute: { x: 420, y: 200 }
+        width: 244
+        height: 120
+        data:
+          type: code
+          title: "Tag payload"
+          code_language: python3
+          variables:
+            - variable: payload_json
+              value_selector: [ trigger_topic2, payload_json ]
+            - variable: request_id
+              value_selector: [ trigger_topic2, request_id ]
+            - variable: source_event_type
+              value_selector: [ trigger_topic2, event_type ]
+          outputs:
+            transformed_payload: { type: string }
+            correlation_id:      { type: string }
+          # Pure-passthrough transform: parses incoming JSON, attaches
+          # processed_by / processed_at / source_event_type, re-serialises.
+          # Replace with real summarisation / decision logic later.
+          code: |
+            import json
+            from datetime import datetime, timezone
+
+            def main(payload_json: str, request_id: str,
+                     source_event_type: str) -> dict:
+                try:
+                    data = json.loads(payload_json) if payload_json else {}
+                except Exception:
+                    data = {"raw": payload_json}
+                if not isinstance(data, dict):
+                    data = {"value": data}
+                data["processed_by"] = "dify"
+                data["processed_at"] = datetime.now(timezone.utc).isoformat()
+                data["source_event_type"] = source_event_type or ""
+                return {
+                    "transformed_payload": json.dumps(
+                        data, ensure_ascii=False, separators=(",", ":")
+                    ),
+                    "correlation_id": request_id or "",
+                }
+
+      # 3) TOOL: AgenTrux Publish Event to Topic3
+      - id: publish_topic3
+        type: custom
+        position: { x: 760, y: 200 }
+        positionAbsolute: { x: 760, y: 200 }
+        width: 244
+        height: 120
+        data:
+          type: tool
+          title: "Publish to Topic3"
+          # Plugin tool reference.
+          # Format: <author>/<plugin_name>/<tool_name>
+          provider_id: "agentrux/agentrux-tools/agentrux_tools"
+          provider_type: builtin
+          tool_name: "agentrux_publish"
+          tool_label: "Publish Event"
+          tool_parameters:
+            # topic_id is a dynamic-select; the Studio operator picks Topic3
+            # from the dropdown after the provider is connected. The literal
+            # below is a placeholder — replace with the real top_<uuid>.
+            topic_id:
+              type: constant
+              value: "top_00000000-0000-0000-0000-000000000003"
+            event_type:
+              type: constant
+              value: "dify.processed"
+            payload_json:
+              type: mixed
+              value: "{{#transform.transformed_payload#}}"
+            correlation_id:
+              type: mixed
+              value: "{{#transform.correlation_id#}}"
+          output_variables:
+            - { variable: event_id,    type: string }
+            - { variable: sequence_no, type: number }
+
+      # 4) END
+      - id: end_ok
+        type: custom
+        position: { x: 1100, y: 200 }
+        positionAbsolute: { x: 1100, y: 200 }
+        width: 244
+        height: 80
+        data:
+          type: end
+          title: "Done"
+          outputs:
+            - variable: published_event_id
+              value_selector: [ publish_topic3, event_id ]
+              type: string
+            - variable: published_sequence_no
+              value_selector: [ publish_topic3, sequence_no ]
+              type: number
+
+    # ------------------------------------------------------------------ edges
+    edges:
+      - id: e1
+        source: trigger_topic2
+        sourceHandle: source
+        target: transform
+        targetHandle: target
+        type: custom
+      - id: e2
+        source: transform
+        sourceHandle: source
+        target: publish_topic3
+        targetHandle: target
+        type: custom
+      - id: e3
+        source: publish_topic3
+        sourceHandle: source
+        target: end_ok
+        targetHandle: target
+        type: custom
