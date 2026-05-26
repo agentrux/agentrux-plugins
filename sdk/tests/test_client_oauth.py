@@ -254,7 +254,7 @@ async def test_device_authorization_normal(make_api_client) -> None:
         )
 
     async with make_api_client(
-        {("POST", "/oauth/device_authorization"): handler}, with_token=False
+        {("POST", "/oauth/device/authorize"): handler}, with_token=False
     ) as api:
         r = await api.device_authorization(client_id="dcr_x_uuid", scope="topic:abc:read")
     assert isinstance(r, DeviceAuthorization)

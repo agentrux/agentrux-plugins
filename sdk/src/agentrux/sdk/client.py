@@ -613,7 +613,7 @@ class AgenTruxAPIClient:
         return DCRRegistration.from_response(resp.json())
 
     # =======================================================================
-    # RFC 8628 Device flow (POST /oauth/device_authorization)
+    # RFC 8628 Device flow (POST /oauth/device/authorize)
     # =======================================================================
 
     async def device_authorization(
@@ -622,7 +622,7 @@ class AgenTruxAPIClient:
         body = {"client_id": client_id}
         if scope:
             body["scope"] = scope
-        resp = await self._request_oauth("/oauth/device_authorization", body)
+        resp = await self._request_oauth("/oauth/device/authorize", body)
         return DeviceAuthorization.from_response(resp.json())
 
     # =======================================================================
