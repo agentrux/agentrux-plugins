@@ -1,19 +1,18 @@
-"""Smoke tests for the OAuth 2.1 refresh + persistence wiring.
+"""Smoke tests for the OAuth 2.1 refresh + persistence wiring (v0.3 SDK).
 
-These pin the post-Codex-review contract:
+These pin the post-Codex-review contract against the v0.3 SDK surface:
 
-- DefaultTokenRefresher posts form-encoded /oauth/token with
-  grant_type=refresh_token + client_id; rejects construction without
-  oauth_client_id.
-- AgenTruxAPIClient autowires DefaultTokenRefresher only when both
-  refresh_token and oauth_client_id are present.
+- ``OAuthRefreshTokenRefresher`` posts form-encoded ``/oauth/token`` with
+  ``grant_type=refresh_token`` + ``client_id``; rejects construction
+  without ``oauth_client_id``.
+- ``AgenTruxClient.from_access_token`` wires up auto-refresh only when
+  both ``refresh_token`` and ``oauth_client_id`` are present.
 - The agent-sdk plugin's per-profile lock + atomic credentials write
   survives concurrent writers without losing a section.
 """
 from __future__ import annotations
 
 import configparser
-import os
 import threading
 import time
 from pathlib import Path
@@ -23,24 +22,27 @@ import httpx
 import pytest
 
 from agentrux.sdk.client import (
-    AgenTruxAPIClient,
-    DefaultTokenRefresher,
+    OAuthRefreshTokenRefresher,
     TokenBundle,
 )
+from agentrux.sdk.facade import AgenTruxClient
 
 
 # ---------------------------------------------------------------------------
-# DefaultTokenRefresher contract
+# OAuthRefreshTokenRefresher contract
 # ---------------------------------------------------------------------------
 
 
-def test_default_refresher_requires_oauth_client_id() -> None:
+def test_refresher_requires_oauth_client_id() -> None:
     with pytest.raises(ValueError, match="oauth_client_id"):
-        DefaultTokenRefresher("https://api.example.com", "")
+        OAuthRefreshTokenRefresher(
+            base_url="https://api.example.com",
+            oauth_client_id="",
+        )
 
 
 @pytest.mark.asyncio
-async def test_default_refresher_posts_form_encoded_to_oauth_token() -> None:
+async def test_refresher_posts_form_encoded_to_oauth_token() -> None:
     captured: dict = {}
 
     class _StubResp:
@@ -67,18 +69,21 @@ async def test_default_refresher_posts_form_encoded_to_oauth_token() -> None:
         async def __aexit__(self, *a) -> None:
             return None
 
-        async def post(self, url: str, *, data, headers, timeout) -> _StubResp:
+        async def aclose(self) -> None:
+            return None
+
+        async def post(self, url: str, *, data, headers) -> _StubResp:
             captured["url"] = url
             captured["data"] = data
             captured["headers"] = headers
             return _StubResp()
 
     with patch.object(httpx, "AsyncClient", _StubAsyncClient):
-        refresher = DefaultTokenRefresher(
-            "https://api.example.com",
-            "oauth-client_abc",
+        refresher = OAuthRefreshTokenRefresher(
+            base_url="https://api.example.com",
+            oauth_client_id="oauth-client_abc",
         )
-        bundle = await refresher.refresh("AT-old", "RT-old")
+        bundle = await refresher.refresh("RT-old")
 
     assert captured["url"] == "https://api.example.com/oauth/token"
     assert captured["data"] == {
@@ -90,32 +95,39 @@ async def test_default_refresher_posts_form_encoded_to_oauth_token() -> None:
     assert isinstance(bundle, TokenBundle)
     assert bundle.access_token == "AT-new"
     assert bundle.refresh_token == "RT-new"
-    assert bundle.expires_at > int(time.time())
+    assert bundle.expires_at_unix > int(time.time())
 
 
 # ---------------------------------------------------------------------------
-# AgenTruxAPIClient autowiring
+# AgenTruxClient.from_access_token autowiring
 # ---------------------------------------------------------------------------
 
 
-def test_client_skips_default_refresher_without_oauth_client_id() -> None:
-    client = AgenTruxAPIClient(
+@pytest.mark.asyncio
+async def test_from_access_token_skips_refresher_without_oauth_client_id() -> None:
+    client = await AgenTruxClient.from_access_token(
         base_url="https://api.example.com",
-        token="AT-explicit",
+        access_token="AT-explicit",
         refresh_token="RT-orphaned",
     )
-    # No oauth_client_id → no refresher gets built, refresh stays disabled.
-    assert client._token_refresher is None  # type: ignore[attr-defined]
+    # No oauth_client_id → no refresher wired, refresh stays disabled.
+    assert client._token_manager._refresher is None  # noqa: SLF001
+    await client.close()
 
 
-def test_client_builds_default_refresher_when_both_present() -> None:
-    client = AgenTruxAPIClient(
+@pytest.mark.asyncio
+async def test_from_access_token_builds_refresher_when_both_present() -> None:
+    client = await AgenTruxClient.from_access_token(
         base_url="https://api.example.com",
-        token="AT-explicit",
+        access_token="AT-explicit",
         refresh_token="RT-good",
         oauth_client_id="oauth-client_zzz",
     )
-    assert isinstance(client._token_refresher, DefaultTokenRefresher)  # type: ignore[attr-defined]
+    assert isinstance(
+        client._token_manager._refresher,  # noqa: SLF001
+        OAuthRefreshTokenRefresher,
+    )
+    await client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +206,7 @@ def test_persist_hook_writes_token_bundle_back(
     bundle = TokenBundle(
         access_token="AT-rotated",
         refresh_token="RT-rotated",
-        expires_at=int(time.time()) + 1800,
+        expires_at_unix=int(time.time()) + 1800,
     )
     hook(bundle)
 
@@ -204,7 +216,7 @@ def test_persist_hook_writes_token_bundle_back(
     assert sec["access_token"] == "AT-rotated"
     assert sec["refresh_token"] == "RT-rotated"
     assert sec["client_id"] == "oauth-client_xyz"  # untouched
-    assert int(sec["expires_at"]) == bundle.expires_at
+    assert int(sec["expires_at"]) == bundle.expires_at_unix
 
 
 # ---------------------------------------------------------------------------

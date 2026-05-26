@@ -18,10 +18,27 @@ _fake_client = ModuleType("agentrux.sdk.client")
 
 
 class _StubClient:
-    """Minimal stub for AgenTruxClient used during import."""
+    """Minimal stub for AgenTruxClient used during import.
+
+    Mirrors the v0.3 facade surface that toolkit.py touches:
+    ``from_access_token`` / ``from_client_credentials`` /
+    ``from_activation_code`` async factories, plus ``close``.
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         self._kwargs = kwargs
+
+    @classmethod
+    async def from_access_token(cls, **kwargs: Any) -> "_StubClient":
+        return cls(**kwargs)
+
+    @classmethod
+    async def from_client_credentials(cls, **kwargs: Any) -> "_StubClient":
+        return cls(**kwargs)
+
+    @classmethod
+    async def from_activation_code(cls, **kwargs: Any) -> "_StubClient":
+        return cls(**kwargs)
 
     async def close(self) -> None:
         pass
@@ -34,7 +51,7 @@ from dataclasses import dataclass
 class _StubTokenBundle:
     access_token: str
     refresh_token: str
-    expires_at: int
+    expires_at_unix: int
 
 
 _fake_facade.AgenTruxClient = _StubClient  # type: ignore[attr-defined]
@@ -137,25 +154,34 @@ class TestGetTools:
 class TestToolkitCreate:
     """Tests for AgenTruxToolkit.create() parameter validation."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Clear every AGENTRUX_* env var so a stray host setting can't
+        flip an auth path on while we're asserting it stays off."""
+        for var in (
+            "AGENTRUX_BASE_URL",
+            "AGENTRUX_CLIENT_ID",
+            "AGENTRUX_CLIENT_SECRET",
+            "AGENTRUX_ACCESS_TOKEN",
+            "AGENTRUX_REFRESH_TOKEN",
+            "AGENTRUX_OAUTH_CLIENT_ID",
+            "AGENTRUX_ACTIVATION_CODE",
+            "AGENTRUX_PROFILE",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
     @pytest.mark.asyncio
     async def test_create_raises_when_no_credentials_anywhere(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path,
     ) -> None:
-        """create() raises ValueError when none of the 3 auth paths can succeed.
+        """create() raises ValueError when none of the 4 auth paths can succeed.
 
         With every env var unset, no explicit args, and an empty
         credentials file, the toolkit must surface the device-flow hint
         rather than silently succeed.
         """
-        monkeypatch.delenv("AGENTRUX_BASE_URL", raising=False)
-        monkeypatch.delenv("AGENTRUX_SCRIPT_ID", raising=False)
-        monkeypatch.delenv("AGENTRUX_CLIENT_SECRET", raising=False)
-        monkeypatch.delenv("AGENTRUX_ACCESS_TOKEN", raising=False)
-        monkeypatch.delenv("AGENTRUX_REFRESH_TOKEN", raising=False)
-        monkeypatch.delenv("AGENTRUX_OAUTH_CLIENT_ID", raising=False)
-        monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
         # The toolkit's _CREDENTIALS_PATH is computed at import time, so
         # an env-var flip alone won't redirect it. Override the module
         # constant directly to point at an empty tmp_path.
@@ -170,27 +196,24 @@ class TestToolkitCreate:
 
     @pytest.mark.asyncio
     async def test_create_raises_when_access_token_without_base_url(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         """Path 1 still validates base_url when an access_token is supplied."""
-        monkeypatch.delenv("AGENTRUX_BASE_URL", raising=False)
         with pytest.raises(ValueError, match="base_url is required"):
             await AgenTruxToolkit.create(access_token="AT-explicit")
 
     @pytest.mark.asyncio
-    async def test_create_raises_when_only_script_id_missing(
+    async def test_create_raises_when_only_client_id_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """Path 2 (client_credentials) requires both script_id AND client_secret.
+        """Path 3 (client_credentials) requires both client_id AND client_secret.
 
         Missing one half of the pair must NOT silently succeed; the
-        toolkit falls through to Path 3 (profile load) and surfaces the
+        toolkit falls through to Path 4 (profile load) and surfaces the
         device-flow hint when no credentials file exists.
         """
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
-        monkeypatch.delenv("AGENTRUX_SCRIPT_ID", raising=False)
         monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "secret-abc")
-        monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
         from pathlib import Path as _Path
         import agentrux_agent_tools.toolkit as _tk
         monkeypatch.setattr(
@@ -204,11 +227,9 @@ class TestToolkitCreate:
     async def test_create_raises_when_only_client_secret_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """Path 2 (client_credentials) requires both script_id AND client_secret."""
+        """Path 3 (client_credentials) requires both client_id AND client_secret."""
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
-        monkeypatch.setenv("AGENTRUX_SCRIPT_ID", "script-123")
-        monkeypatch.delenv("AGENTRUX_CLIENT_SECRET", raising=False)
-        monkeypatch.delenv("AGENTRUX_INVITE_CODE", raising=False)
+        monkeypatch.setenv("AGENTRUX_CLIENT_ID", "crd_abc")
         from pathlib import Path as _Path
         import agentrux_agent_tools.toolkit as _tk
         monkeypatch.setattr(
@@ -226,37 +247,61 @@ class TestToolkitCreate:
 class TestEnvVarNaming:
     """Verify the expected environment variable names are used."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in (
+            "AGENTRUX_BASE_URL",
+            "AGENTRUX_CLIENT_ID",
+            "AGENTRUX_CLIENT_SECRET",
+            "AGENTRUX_ACCESS_TOKEN",
+            "AGENTRUX_REFRESH_TOKEN",
+            "AGENTRUX_OAUTH_CLIENT_ID",
+            "AGENTRUX_ACTIVATION_CODE",
+            "AGENTRUX_PROFILE",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
     @pytest.mark.asyncio
-    async def test_env_vars_are_agentrux_prefixed(
+    async def test_client_credentials_env_vars(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """create() reads AGENTRUX_BASE_URL, AGENTRUX_SCRIPT_ID,
-        AGENTRUX_CLIENT_SECRET, and AGENTRUX_INVITE_CODE."""
+        """create() reads AGENTRUX_BASE_URL / AGENTRUX_CLIENT_ID /
+        AGENTRUX_CLIENT_SECRET and dispatches to from_client_credentials."""
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
-        monkeypatch.setenv("AGENTRUX_SCRIPT_ID", "script-123")
-        monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "secret-abc")
-        monkeypatch.setenv("AGENTRUX_INVITE_CODE", "invite-xyz")
+        monkeypatch.setenv("AGENTRUX_CLIENT_ID", "crd_abc")
+        monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "aks_secret")
 
-        # Patch AgenTruxClient to avoid real HTTP calls
-        mock_client_cls = MagicMock()
-        mock_instance = AsyncMock()
-        mock_instance.get_token = AsyncMock(
-            return_value={"access_token": "tok", "refresh_token": "rtok"}
-        )
-        mock_instance.redeem_grant = AsyncMock()
-        mock_instance.close = AsyncMock()
-        mock_client_cls.return_value = mock_instance
-
-        with patch("agentrux_agent_tools.toolkit.AgenTruxClient", mock_client_cls):
+        from_cc = AsyncMock(return_value=_StubClient())
+        with patch(
+            "agentrux_agent_tools.toolkit.AgenTruxClient.from_client_credentials",
+            from_cc,
+        ):
             toolkit = await AgenTruxToolkit.create()
 
-        # Verify invite code flow was triggered (proves AGENTRUX_INVITE_CODE was read)
-        mock_instance.redeem_grant.assert_called_once_with(
-            invite_code="invite-xyz",
-            script_id="script-123",
-            client_secret="secret-abc",
+        from_cc.assert_called_once_with(
+            base_url="https://api.example.com",
+            client_id="crd_abc",
+            client_secret="aks_secret",
         )
-        # Verify get_token was called with the correct script_id and secret
-        mock_instance.get_token.assert_called_once_with("script-123", "secret-abc")
+        await toolkit.close()
 
+    @pytest.mark.asyncio
+    async def test_activation_code_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AGENTRUX_ACTIVATION_CODE routes to from_activation_code."""
+        monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
+        monkeypatch.setenv("AGENTRUX_ACTIVATION_CODE", "act_xyz")
+
+        from_ac = AsyncMock(return_value=_StubClient())
+        with patch(
+            "agentrux_agent_tools.toolkit.AgenTruxClient.from_activation_code",
+            from_ac,
+        ):
+            toolkit = await AgenTruxToolkit.create()
+
+        from_ac.assert_called_once_with(
+            base_url="https://api.example.com",
+            activation_code="act_xyz",
+        )
         await toolkit.close()

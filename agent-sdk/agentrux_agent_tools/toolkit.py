@@ -14,10 +14,15 @@ Auth resolution order (first match wins):
   1. Explicit ``access_token=`` argument (or ``AGENTRUX_ACCESS_TOKEN`` env);
      pair with ``refresh_token=`` + ``oauth_client_id=`` (or the
      ``AGENTRUX_REFRESH_TOKEN`` / ``AGENTRUX_OAUTH_CLIENT_ID`` env vars)
-     to enable auto-refresh.
-  2. Explicit ``script_id`` + ``client_secret`` (legacy client_credentials,
-     also via ``AGENTRUX_SCRIPT_ID`` / ``AGENTRUX_CLIENT_SECRET`` env)
-  3. ``~/.agentrux/credentials`` written by ``agentrux login`` (RFC 8628
+     to enable auto-refresh (OAuth 2.1 §6 / RFC 6749 §6 refresh_token
+     grant against ``/oauth/token``).
+  2. Explicit ``activation_code=`` (or ``AGENTRUX_ACTIVATION_CODE`` env)
+     redeems a single-use ``act_<base64>`` for a fresh ``crd_/aks_`` pair
+     and continues via client_credentials.
+  3. Explicit ``client_id`` + ``client_secret`` (or ``AGENTRUX_CLIENT_ID``
+     / ``AGENTRUX_CLIENT_SECRET`` env): OAuth 2.1 client_credentials
+     grant against ``/oauth/token``.
+  4. ``~/.agentrux/credentials`` written by ``agentrux login`` (RFC 8628
      device flow). Profile defaults to "default", overridable via
      ``profile=`` arg or ``AGENTRUX_PROFILE`` env. Auto-refresh is
      wired in: when the SDK rotates the access/refresh token pair, the
@@ -123,8 +128,8 @@ def _make_persist_hook(profile: str):
                 profile,
                 {
                     "access_token": bundle.access_token,
-                    "refresh_token": bundle.refresh_token,
-                    "expires_at": str(bundle.expires_at),
+                    "refresh_token": bundle.refresh_token or "",
+                    "expires_at": str(bundle.expires_at_unix),
                 },
             )
 
@@ -261,13 +266,13 @@ class AgenTruxToolkit:
         cls,
         *,
         base_url: str | None = None,
-        script_id: str | None = None,
+        client_id: str | None = None,
         client_secret: str | None = None,
         access_token: str | None = None,
         refresh_token: str | None = None,
         oauth_client_id: str | None = None,
         profile: str | None = None,
-        invite_code: str | None = None,
+        activation_code: str | None = None,
     ) -> AgenTruxToolkit:
         """Create an authenticated toolkit.
 
@@ -276,12 +281,12 @@ class AgenTruxToolkit:
         module docstring for the resolution order.
         """
         base_url = base_url or os.environ.get("AGENTRUX_BASE_URL", "")
-        script_id = script_id or os.environ.get("AGENTRUX_SCRIPT_ID", "")
+        client_id = client_id or os.environ.get("AGENTRUX_CLIENT_ID", "")
         client_secret = client_secret or os.environ.get("AGENTRUX_CLIENT_SECRET", "")
         access_token = access_token or os.environ.get("AGENTRUX_ACCESS_TOKEN", "")
         refresh_token = refresh_token or os.environ.get("AGENTRUX_REFRESH_TOKEN", "")
         oauth_client_id = oauth_client_id or os.environ.get("AGENTRUX_OAUTH_CLIENT_ID", "")
-        invite_code = invite_code or os.environ.get("AGENTRUX_INVITE_CODE")
+        activation_code = activation_code or os.environ.get("AGENTRUX_ACTIVATION_CODE")
         profile = profile or os.environ.get("AGENTRUX_PROFILE", "default")
 
         # Path 1: an explicit access_token wins outright. If the caller
@@ -294,41 +299,48 @@ class AgenTruxToolkit:
                     "base_url is required when passing access_token. "
                     "Pass it directly or set AGENTRUX_BASE_URL."
                 )
-            client = AgenTruxClient(
+            client = await AgenTruxClient.from_access_token(
                 base_url=base_url,
-                token=access_token,
+                access_token=access_token,
                 refresh_token=refresh_token or None,
                 oauth_client_id=oauth_client_id or None,
             )
             logger.info("AgenTruxToolkit created from explicit access_token")
             return cls(client)
 
-        # Path 2: legacy client_credentials. Used by CI / unattended
-        # installs that issued a long-lived client_secret in Console.
-        if script_id and client_secret:
+        # Path 2: single-use activation_code → fresh client_credentials.
+        # The SDK redeems ``act_<base64>`` against /auth/activation-codes
+        # and continues via client_credentials, so the caller never
+        # touches the issued crd_/aks_ pair directly.
+        if activation_code:
+            if not base_url:
+                raise ValueError(
+                    "base_url is required when passing activation_code. "
+                    "Pass it directly or set AGENTRUX_BASE_URL."
+                )
+            client = await AgenTruxClient.from_activation_code(
+                base_url=base_url,
+                activation_code=activation_code,
+            )
+            logger.info("AgenTruxToolkit created via activation_code")
+            return cls(client)
+
+        # Path 3: OAuth 2.1 client_credentials. Used by CI / unattended
+        # installs that issued a long-lived (crd_, aks_) pair in Console.
+        if client_id and client_secret:
             if not base_url:
                 raise ValueError(
                     "base_url is required. Pass it directly or set AGENTRUX_BASE_URL."
                 )
-            temp_client = AgenTruxClient(base_url=base_url, token="")
-            if invite_code:
-                logger.info("Redeeming share code for script %s", script_id)
-                await temp_client.redeem_grant(
-                    invite_code=invite_code,
-                    script_id=script_id,
-                    client_secret=client_secret,
-                )
-            token_data = await temp_client.get_token(script_id, client_secret)
-            await temp_client.close()
-            client = AgenTruxClient(
+            client = await AgenTruxClient.from_client_credentials(
                 base_url=base_url,
-                token=token_data["access_token"],
-                refresh_token=token_data.get("refresh_token"),
+                client_id=client_id,
+                client_secret=client_secret,
             )
-            logger.info("AgenTruxToolkit created via client_credentials for script %s", script_id)
+            logger.info("AgenTruxToolkit created via client_credentials for %s", client_id)
             return cls(client)
 
-        # Path 3: device-flow profile from ``agentrux login``. We hold
+        # Path 4: device-flow profile from ``agentrux login``. We hold
         # the per-profile lock for the load+expiry-check region so a
         # concurrent refresh write-back can't race the load. The lock
         # is released before we hand control to AgenTruxClient because
@@ -361,9 +373,9 @@ class AgenTruxToolkit:
                     "— pre-OAuth-2.1 credentials. Auto-refresh disabled. "
                     "Re-run `agentrux login` to upgrade.", profile,
                 )
-            client = AgenTruxClient(
+            client = await AgenTruxClient.from_access_token(
                 base_url=chosen_base_url,
-                token=creds["access_token"],
+                access_token=creds["access_token"],
                 refresh_token=creds["refresh_token"] or None,
                 oauth_client_id=stored_client_id,
                 on_token_refreshed=_make_persist_hook(profile),
@@ -377,8 +389,10 @@ class AgenTruxToolkit:
         raise ValueError(
             "No credentials found. Either:\n"
             "  - run `agentrux login` to authenticate via OAuth device flow, OR\n"
-            "  - set AGENTRUX_BASE_URL + AGENTRUX_SCRIPT_ID + AGENTRUX_CLIENT_SECRET, OR\n"
-            "  - pass access_token=, script_id+client_secret=, or profile= directly."
+            "  - set AGENTRUX_BASE_URL + AGENTRUX_CLIENT_ID + AGENTRUX_CLIENT_SECRET, OR\n"
+            "  - set AGENTRUX_BASE_URL + AGENTRUX_ACTIVATION_CODE, OR\n"
+            "  - pass access_token=, client_id+client_secret=, activation_code=, "
+            "or profile= directly."
         )
 
     # ── Tool definitions ─────────────────────────────────────────────────

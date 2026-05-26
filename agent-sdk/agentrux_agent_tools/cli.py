@@ -4,7 +4,7 @@ Implements `agentrux login` (RFC 8628 OAuth Device Authorization Grant)
 so the user never has to copy-paste credential pairs out of the Console.
 
 Flow:
-  1. POST /oauth/device_authorization → device_code, user_code, verification_uri
+  1. POST /oauth/device/authorize → device_code, user_code, verification_uri
   2. Print user_code + URL, optionally open the browser.
   3. Poll /oauth/token with grant_type=device_code until approved or expired.
   4. Save the resulting access_token / refresh_token to ~/.agentrux/credentials.
@@ -310,7 +310,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
     # device_code (kept private to this process) and a user_code (the
     # human-friendly XXXX-XXXX string we display).
     status, payload = _post(
-        f"{base_url}/oauth/device_authorization",
+        f"{base_url}/oauth/device/authorize",
         {"client_id": client_id, "scope": args.scope or ""},
     )
     if status >= 400:
