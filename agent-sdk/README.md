@@ -1,17 +1,11 @@
 # agentrux-agent-tools
 
-> **Beta (0.3.2b1)** -- API may change before 1.0.
+> **Beta** -- API may change before 1.0.
 
 Framework-agnostic AI agent toolkit for
 [AgenTrux](https://github.com/agentrux/agentrux).  Exposes
 publish/subscribe/read operations as tool definitions compatible with OpenAI
 function calling, Anthropic tool_use, and any other LLM framework.
-
-## Requirements
-
-- **Python ≥ 3.12.** This package declares `requires-python = ">=3.10"`, but it
-  pulls in `agentrux-sdk>=0.3.0b2` which requires Python 3.12+. Installing on
-  3.10 or 3.11 will resolve but break at import time on `agentrux-sdk`.
 
 ## Installation
 
@@ -19,40 +13,21 @@ function calling, Anthropic tool_use, and any other LLM framework.
 pip install agentrux-agent-tools
 ```
 
-Or install from source (clone the `agentrux-plugins` repo first):
+Or install from source:
 
 ```bash
-cd agent-sdk
+cd plugins/agent-sdk
 pip install -e .
 ```
 
 ## Quick Start
 
-### 1a. Quick start (device flow, recommended for laptops / dev VMs)
-
-```bash
-pip install agentrux-agent-tools
-agentrux login          # opens browser, completes OAuth 2.1 device flow,
-                        # writes ~/.agentrux/credentials (INI)
-```
-
-Then in code:
+### 1. Create the toolkit
 
 ```python
 import asyncio
 from agentrux_agent_tools import AgenTruxToolkit
 
-async def main():
-    # Reads ~/.agentrux/credentials and refreshes tokens automatically.
-    toolkit = await AgenTruxToolkit.create()
-```
-
-### 1b. Headless / CI (client_credentials)
-
-For unattended hosts where opening a browser is not possible, pass a Script's
-`client_credentials` secret directly:
-
-```python
 async def main():
     toolkit = await AgenTruxToolkit.create(
         base_url="https://api.agentrux.com",
@@ -65,29 +40,6 @@ async def main():
     # export AGENTRUX_CLIENT_SECRET=...
     # toolkit = await AgenTruxToolkit.create()
 ```
-
-### Credentials file: `~/.agentrux/credentials`
-
-`agentrux login` writes an INI file with the following per-profile fields:
-
-| Field | Description |
-|-------|-------------|
-| `base_url` | AgenTrux API URL (e.g. `https://api.agentrux.com`) |
-| `script_id` | Script identifier the token is bound to |
-| `access_token` | Current OAuth 2.1 JWT |
-| `refresh_token` | Refresh token (rotated on every `/oauth/token` call) |
-| `expires_at` | epoch seconds, used to pre-emptively refresh |
-| `client_id` | OAuth 2.1 client ID (`oauth-client_<uuid>`) |
-
-The toolkit refreshes the bundle in-place via `POST /oauth/token`
-(form-encoded, `grant_type=refresh_token`).
-
-### Concurrent agents on the same machine
-
-Multiple agent processes can share the same credentials file safely. Each
-profile has a per-profile lockfile under `~/.agentrux/locks/<profile>.lock`,
-so only one process writes a refreshed `TokenBundle` at a time and the others
-re-read after the lock is released. No race on single-use refresh tokens.
 
 ### 2. Get tool definitions
 
@@ -207,4 +159,4 @@ async def generic_agent(llm_call, user_prompt: str):
 | `AGENTRUX_BASE_URL` | Server URL |
 | `AGENTRUX_SCRIPT_ID` | Script identifier |
 | `AGENTRUX_CLIENT_SECRET` | Client Secret |
-| `AGENTRUX_INVITE_CODE` | Optional invite code for cross-Domo (cross-account) access |
+| `AGENTRUX_INVITE_CODE` | Optional invite code for cross-Alias (cross-account) access |

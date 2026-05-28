@@ -12,9 +12,9 @@ Flow:
 The token endpoint returns a Bearer access_token (short-lived) plus a
 refresh_token (long-lived). We store both — runtime SDK code reads the
 access_token, falls back to the refresh_token when it expires. The
-script_id is parsed out of the JWT's payload so callers can introspect
-which Script the device is acting as without keeping that as a separate
-piece of state to drift from the token.
+client_id is parsed out of the JWT's payload so callers can introspect
+which OAuth client the device is acting as without keeping that as a
+separate piece of state to drift from the token.
 
 The saved file format is a key=value INI (no third-party deps — Python
 stdlib's configparser handles it). The default profile is "default";
@@ -26,19 +26,15 @@ from __future__ import annotations
 import argparse
 import base64
 import configparser
-import contextlib
-import fcntl
 import json
 import os
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
-from typing import Iterator
 
 
 def _jwt_payload(token: str) -> dict:
@@ -65,41 +61,6 @@ CREDENTIALS_PATH = Path.home() / ".agentrux" / "credentials"
 # login). Public client (no secret) — PKCE / device_code flow does
 # not need a confidential client.
 CLIENT_REGISTRATION_PATH = Path.home() / ".agentrux" / "cli-client.json"
-# Per-profile lock file. Used by both `agentrux login` (write side) and
-# the runtime toolkit's refresh write-back to serialise the entire
-# read → check expiry → refresh API call → write region for one
-# profile. Without it, two processes can both burn the single-use
-# refresh_token at once, ending up with one stale and one revoked.
-LOCKS_DIR = Path.home() / ".agentrux" / "locks"
-
-
-def _profile_lock_path(profile: str) -> Path:
-    # Lock files are POSIX-only (fcntl). Profile names are validated to
-    # plain identifiers; Path() rejects path separators outright.
-    safe = profile.replace("/", "_").replace("\\", "_")
-    return LOCKS_DIR / f"{safe}.lock"
-
-
-@contextlib.contextmanager
-def _profile_lock(profile: str) -> "Iterator[None]":
-    """Acquire an exclusive flock on the per-profile lock file.
-
-    The lock file lives separately from the credentials file so we can
-    flock() on it without keeping the credentials file open for the
-    entire critical section (which would interfere with atomic rename
-    on write).
-    """
-    LOCKS_DIR.mkdir(parents=True, exist_ok=True)
-    path = _profile_lock_path(profile)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
 
 
 def _ensure_registered_client(base_url: str) -> str:
@@ -143,11 +104,8 @@ def _ensure_registered_client(base_url: str) -> str:
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        # Don't dump the body — only surface the HTTP code, the rest
-        # could include server-internal hints we shouldn't leak through
-        # a public CLI binary.
         raise RuntimeError(
-            f"Could not register CLI as OAuth client (HTTP {e.code})"
+            f"Could not register CLI as OAuth client ({e.code}): {e.read().decode('utf-8', 'replace')[:300]}"
         ) from e
     client_id = payload.get("client_id")
     if not client_id:
@@ -158,49 +116,6 @@ def _ensure_registered_client(base_url: str) -> str:
     CLIENT_REGISTRATION_PATH.write_text(json.dumps(cache, indent=2))
     os.chmod(CLIENT_REGISTRATION_PATH, 0o600)
     return client_id
-
-
-# A small set of legacy AgenTrux internal error codes that map onto the
-# RFC 8628 §3.5 device-flow polling vocabulary. Backend currently
-# returns its own error envelope (`{"error": {"code": ..., "message":
-# ...}}`) for some grant flows even though RFC 6749 §5.2 prescribes a
-# flat `{"error": "<code>"}` shape. We translate so the CLI's polling
-# loop is robust to either response shape, and so a future backend
-# fix that flips to the RFC form remains a no-op for clients.
-_LEGACY_TO_OAUTH_ERR = {
-    # Server uses RATE_LIMITED with the human message "user has not yet
-    # approved" while the device_code is alive but unredeemed.
-    "RATE_LIMITED": "authorization_pending",
-}
-
-
-def _coerce_oauth_error(payload: dict | None) -> str:
-    """Extract a flat OAuth error code from a /oauth/token error response.
-
-    Returns "" when the payload has no error to report. Tolerates two
-    shapes:
-      - RFC 6749 §5.2: ``{"error": "authorization_pending", ...}``
-      - AgenTrux legacy wrapper: ``{"error": {"code": "RATE_LIMITED",
-        "message": "user has not yet approved"}}``
-
-    The legacy ``code`` is mapped onto RFC 8628 §3.5 polling vocabulary
-    when we can recognise it, and otherwise passed through verbatim so
-    a fresh server-side error name still surfaces in logs.
-    """
-    if not payload:
-        return ""
-    err = payload.get("error", "")
-    if isinstance(err, dict):
-        msg = (err.get("message") or "").lower()
-        code = err.get("code") or ""
-        if code == "RATE_LIMITED" and "approved" in msg:
-            return "authorization_pending"
-        if code == "RATE_LIMITED" and "slow" in msg:
-            return "slow_down"
-        return _LEGACY_TO_OAUTH_ERR.get(code, code) if isinstance(code, str) else ""
-    if isinstance(err, str):
-        return err
-    return ""
 
 
 def _post(url: str, data: dict, timeout: float = 10.0) -> tuple[int, dict]:
@@ -232,11 +147,10 @@ def _post(url: str, data: dict, timeout: float = 10.0) -> tuple[int, dict]:
 def _save_credentials(
     profile: str,
     base_url: str,
-    script_id: str,
+    client_id: str,
     access_token: str,
     refresh_token: str,
     expires_at: int,
-    client_id: str,
 ) -> Path:
     """Write the OAuth tokens to ~/.agentrux/credentials, mode 0600.
 
@@ -245,17 +159,10 @@ def _save_credentials(
     when they audit local secrets. expires_at is unix epoch — runtime
     SDK code compares to wall clock to decide refresh.
 
-    ``client_id`` is the DCR-registered OAuth client_id used to obtain
-    these tokens; the runtime toolkit needs it to call /oauth/token's
-    refresh_token grant (which mandates client_id per RFC 6749 §6 +
-    AgenTrux spec §22.2). We persist it per-profile rather than relying
-    on ~/.agentrux/cli-client.json so an `--client-id` override at login
-    time stays bound to the credentials it produced.
-
-    Atomic write via NamedTemporaryFile + os.replace so a crashed write
-    cannot leave a half-written INI behind. Caller is expected to hold
-    ``_profile_lock(profile)`` so concurrent writes don't trample each
-    other's `[default]` section.
+    ``client_id`` is the JWT-derived ``crd_<uuid>`` (or empty when the
+    claim does not surface it). Profiles written by older CLI builds
+    stored ``script_id`` instead; ``toolkit._load_cli_profile`` reads
+    either column so existing files keep working.
     """
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = configparser.ConfigParser()
@@ -263,23 +170,14 @@ def _save_credentials(
         cfg.read(CREDENTIALS_PATH)
     cfg[profile] = {
         "base_url": base_url,
-        "script_id": script_id,
+        "client_id": client_id,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "expires_at": str(expires_at),
-        "client_id": client_id,
     }
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=str(CREDENTIALS_PATH.parent),
-        prefix=".credentials.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        cfg.write(tmp)
-        tmp_path = Path(tmp.name)
-    os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, CREDENTIALS_PATH)
+    with open(CREDENTIALS_PATH, "w") as f:
+        cfg.write(f)
+    os.chmod(CREDENTIALS_PATH, 0o600)
     return CREDENTIALS_PATH
 
 
@@ -288,15 +186,6 @@ def cmd_login(args: argparse.Namespace) -> int:
     # Lazy DCR: the first login on a host registers a public OAuth
     # client; subsequent logins reuse that client_id. Skipping if the
     # user passed --client-id (e.g. an operator-pre-registered one).
-    # Hold the per-profile lock for the entire login run — without it,
-    # two concurrent `agentrux login` against the same profile would
-    # both write to the credentials file and the second would clobber
-    # the first's tokens before they were ever used.
-    with _profile_lock(args.profile):
-        return _run_login(args, base_url)
-
-
-def _run_login(args: argparse.Namespace, base_url: str) -> int:
     if args.client_id:
         client_id = args.client_id
     else:
@@ -314,12 +203,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
         {"client_id": client_id, "scope": args.scope or ""},
     )
     if status >= 400:
-        # Surface OAuth's standard error fields only; never the full
-        # JSON (avoids leaking server-internal details if the backend
-        # ever expands the error payload).
-        err = _coerce_oauth_error(payload) or f"http_{status}"
-        desc = (payload or {}).get("error_description", "")
-        print(f"error: device_authorization failed: {err} {desc}".strip(), file=sys.stderr)
+        print(f"error: device/authorize failed ({status}): {payload}", file=sys.stderr)
         return 1
     device_code = payload["device_code"]
     user_code = payload["user_code"]
@@ -362,9 +246,10 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
             print()
             # The /oauth/token device_code grant returns the standard
             # OAuth response: access_token + refresh_token + scope.
-            # Pull script_id from the JWT's claims (it is added under
-            # "client_id" or "sub" depending on issuance path) so the
-            # CLI doesn't have to make a follow-up /me call.
+            # Pull client_id from the JWT's claims so the CLI doesn't
+            # have to make a follow-up /me call. Phase 1.9+ tokens carry
+            # `client_id` (= crd_<uuid>); older tokens may use the
+            # legacy `script_id` claim or fall back to `sub`.
             access_token = token_payload.get("access_token", "")
             refresh_token = token_payload.get("refresh_token", "") or ""
             expires_in = int(token_payload.get("expires_in", 3600) or 3600)
@@ -375,7 +260,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
                 )
                 return 1
             claims = _jwt_payload(access_token)
-            script_id = (
+            client_identity = (
                 claims.get("client_id")
                 or claims.get("script_id")
                 or claims.get("sub")
@@ -383,13 +268,12 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
             )
             expires_at = int(time.time()) + expires_in
             path = _save_credentials(
-                args.profile, base_url, script_id, access_token, refresh_token,
-                expires_at, client_id,
+                args.profile, base_url, client_identity, access_token, refresh_token, expires_at,
             )
-            print(f"✓ Authorized as Script {script_id or '(unknown)'}.")
+            print(f"✓ Authorized as client {client_identity or '(unknown)'}.")
             print(f"  Tokens saved to {path} [{args.profile}]")
             return 0
-        err = _coerce_oauth_error(token_payload)
+        err = (token_payload or {}).get("error", "")
         if err == "authorization_pending":
             continue
         if err == "slow_down":
@@ -402,9 +286,7 @@ def _run_login(args: argparse.Namespace, base_url: str) -> int:
         # Unknown 4xx — surface it so we don't poll forever.
         if status >= 400:
             print()
-            err_desc = (token_payload or {}).get("error_description") or ""
-            err_name = err or f"http_{status}"
-            print(f"error: token poll failed: {err_name} {err_desc}".strip(), file=sys.stderr)
+            print(f"error: poll failed ({status}): {token_payload}", file=sys.stderr)
             return 1
 
     print()
@@ -426,7 +308,9 @@ def cmd_whoami(args: argparse.Namespace) -> int:
     sec = cfg[profile]
     print(f"profile:       {profile}")
     print(f"base_url:      {sec.get('base_url', '')}")
-    print(f"script_id:     {sec.get('script_id', '')}")
+    # Prefer the new `client_id` column; fall back to `script_id` for
+    # profiles written by older CLI builds.
+    print(f"client_id:     {sec.get('client_id', '') or sec.get('script_id', '')}")
     expires_at_s = sec.get("expires_at", "")
     if expires_at_s:
         try:
@@ -449,23 +333,13 @@ def cmd_logout(args: argparse.Namespace) -> int:
     """Drop a profile from ~/.agentrux/credentials."""
     if not CREDENTIALS_PATH.exists():
         return 0
-    with _profile_lock(args.profile):
-        cfg = configparser.ConfigParser()
-        cfg.read(CREDENTIALS_PATH)
-        if args.profile not in cfg:
-            return 0
-        cfg.remove_section(args.profile)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=str(CREDENTIALS_PATH.parent),
-            prefix=".credentials.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            cfg.write(tmp)
-            tmp_path = Path(tmp.name)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, CREDENTIALS_PATH)
+    cfg = configparser.ConfigParser()
+    cfg.read(CREDENTIALS_PATH)
+    if args.profile not in cfg:
+        return 0
+    cfg.remove_section(args.profile)
+    with open(CREDENTIALS_PATH, "w") as f:
+        cfg.write(f)
     print(f"Removed profile {args.profile!r}")
     return 0
 

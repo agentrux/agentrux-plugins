@@ -24,7 +24,7 @@ import logging
 import traceback
 from typing import Any
 
-from agentrux.sdk.facade import AgenTruxClient
+from .client import AgentRuxClient
 
 from . import tools
 
@@ -40,14 +40,14 @@ _TOOL_REGISTRY: dict[str, Any] = {
 
 
 async def execute_tool(
-    client: AgenTruxClient,
+    client: AgentRuxClient,
     tool_name: str,
     arguments: dict[str, Any],
 ) -> str:
     """Execute a tool and return an LLM-readable string.
 
     Args:
-        client: An authenticated AgenTruxClient.
+        client: An authenticated AgentRuxClient.
         tool_name: Name of the tool to execute (must be in the registry).
         arguments: Keyword arguments parsed from the LLM tool call.
 

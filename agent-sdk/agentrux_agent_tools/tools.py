@@ -1,6 +1,6 @@
 """Individual tool functions for AgenTrux agent integration.
 
-Each function accepts an ``AgenTruxClient`` and keyword arguments that
+Each function accepts an ``AgentRuxClient`` and keyword arguments that
 match the tool parameter schemas defined in :mod:`toolkit`.  All functions
 return an LLM-readable JSON string.
 """
@@ -11,40 +11,33 @@ import json
 import logging
 from typing import Any
 
-from agentrux.sdk.facade import AgenTruxClient
+from .client import AgentRuxClient
 
 logger = logging.getLogger(__name__)
 
 
 def _envelope_to_dict(env: Any) -> dict[str, Any]:
-    """Convert a MessageEnvelope to a plain dict for JSON serialisation.
-
-    Field names follow the v0.3 SDK / pipe_router._event_view_to_dict
-    contract: ``sequence_number`` / ``event_type`` / ``stored_at`` /
-    ``producer_script_id`` / ``payload_object_id``.
-    """
+    """Convert a MessageEnvelope to a plain dict for JSON serialisation."""
     return {
         "event_id": env.event_id,
-        "topic_id": env.topic_id,
-        "sequence_number": env.sequence_number,
-        "stored_at": env.stored_at.isoformat() if env.stored_at else None,
-        "event_type": env.event_type,
-        "payload_kind": env.payload_kind,
+        "sequence_no": env.sequence_no,
+        "timestamp": env.timestamp.isoformat() if env.timestamp else None,
+        "type": env.type,
         "payload": env.payload,
-        "payload_object_id": env.payload_object_id,
-        "producer_script_id": env.producer_script_id,
+        "payload_ref": env.payload_ref,
+        "producer_script": env.producer_script,
     }
 
 
 async def publish_event(
-    client: AgenTruxClient,
+    client: AgentRuxClient,
     *,
     topic_id: str,
     event_type: str,
     payload: dict[str, Any] | None = None,
 ) -> str:
     """Publish an event and return the event_id as JSON."""
-    result = await client.publish(
+    event_id = await client.publish(
         topic_id=topic_id,
         event_type=event_type,
         payload=payload,
@@ -52,8 +45,7 @@ async def publish_event(
     return json.dumps(
         {
             "status": "published",
-            "event_id": result.event_id,
-            "sequence_number": result.sequence_number,
+            "event_id": event_id,
             "topic_id": topic_id,
             "event_type": event_type,
         },
@@ -62,7 +54,7 @@ async def publish_event(
 
 
 async def list_events(
-    client: AgenTruxClient,
+    client: AgentRuxClient,
     *,
     topic_id: str,
     limit: int = 20,
@@ -73,22 +65,21 @@ async def list_events(
     if event_type:
         kwargs["event_type"] = event_type
 
-    page = await client.list_events(topic_id=topic_id, **kwargs)
+    envelopes, _cursor = await client.list_events(topic_id=topic_id, **kwargs)
 
-    events = [_envelope_to_dict(env) for env in page.events]
+    events = [_envelope_to_dict(env) for env in envelopes]
     return json.dumps(
         {
             "topic_id": topic_id,
             "count": len(events),
             "events": events,
-            "has_more": page.next.has_more,
         },
         indent=2,
     )
 
 
 async def get_event(
-    client: AgenTruxClient,
+    client: AgentRuxClient,
     *,
     topic_id: str,
     event_id: str,
@@ -99,7 +90,7 @@ async def get_event(
 
 
 async def wait_for_event(
-    client: AgenTruxClient,
+    client: AgentRuxClient,
     *,
     topic_id: str,
     timeout_seconds: int = 30,
@@ -117,7 +108,7 @@ async def wait_for_event(
         nonlocal result
         async with sub:
             async for env in sub:
-                if event_type and env.event_type != event_type:
+                if event_type and env.type != event_type:
                     continue
                 result = _envelope_to_dict(env)
                 break

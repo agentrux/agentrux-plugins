@@ -11,42 +11,39 @@ Usage::
     result  = await toolkit.execute("publish_event", {...})
 
 Auth resolution order (first match wins):
-  1. Explicit ``access_token=`` argument (or ``AGENTRUX_ACCESS_TOKEN`` env);
-     pair with ``refresh_token=`` + ``oauth_client_id=`` (or the
-     ``AGENTRUX_REFRESH_TOKEN`` / ``AGENTRUX_OAUTH_CLIENT_ID`` env vars)
-     to enable auto-refresh (OAuth 2.1 §6 / RFC 6749 §6 refresh_token
-     grant against ``/oauth/token``).
-  2. Explicit ``activation_code=`` (or ``AGENTRUX_ACTIVATION_CODE`` env)
-     redeems a single-use ``act_<base64>`` for a fresh ``crd_/aks_`` pair
-     and continues via client_credentials.
-  3. Explicit ``client_id`` + ``client_secret`` (or ``AGENTRUX_CLIENT_ID``
-     / ``AGENTRUX_CLIENT_SECRET`` env): OAuth 2.1 client_credentials
-     grant against ``/oauth/token``.
-  4. ``~/.agentrux/credentials`` written by ``agentrux login`` (RFC 8628
+  1. Explicit ``access_token=`` argument (or ``AGENTRUX_ACCESS_TOKEN`` env).
+     The caller manages rotation; the toolkit just attaches the Bearer.
+  2. Explicit ``client_id`` + ``client_secret`` (OAuth 2.1 client_credentials,
+     also via ``AGENTRUX_CLIENT_ID`` / ``AGENTRUX_CLIENT_SECRET`` env).
+     ``client_id`` is the ``crd_<uuid>`` issued by
+     ``POST /auth/redeem-activation-code``; ``client_secret`` is ``aks_<plain>``.
+     The toolkit issues an aat_ Bearer via ``POST /oauth/token``.
+  3. ``~/.agentrux/credentials`` written by ``agentrux login`` (RFC 8628
      device flow). Profile defaults to "default", overridable via
-     ``profile=`` arg or ``AGENTRUX_PROFILE`` env. Auto-refresh is
-     wired in: when the SDK rotates the access/refresh token pair, the
-     hook here re-acquires the per-profile lock and writes the new
-     bundle back so the next process starts from the rotated token.
+     ``profile=`` arg or ``AGENTRUX_PROFILE`` env. The toolkit reads
+     access_token + refresh_token straight out of the file and rotates
+     them on expiry via the refresh_token grant.
 
 If none of those produce credentials, ``create()`` raises with a
 human-readable hint pointing at ``agentrux login``.
+
+Phase 1.9+ note: the legacy ``script_id`` + ``client_secret`` pair (used by
+the old ``/auth/token`` endpoint that is gone) is not supported. Pass
+``client_id`` / ``AGENTRUX_CLIENT_ID`` instead — that's the ``crd_<uuid>``
+the activation-code redemption now returns.
 """
 from __future__ import annotations
 
 import configparser
 import logging
 import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from agentrux.sdk.client import TokenBundle
-from agentrux.sdk.facade import AgenTruxClient
+from .client import AgentRuxClient
 
 from . import tools as tool_fns
-from .cli import _profile_lock  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +55,15 @@ def _load_cli_profile(profile: str) -> dict[str, str] | None:
     """Read tokens persisted by ``agentrux login`` for *profile*.
 
     Returns None if the file or the profile is missing — callers fall
-    through to the legacy explicit-args path. Returning a tokens dict
-    instead of asserting "expires_at > now" lets the underlying
-    AgenTruxClient drive the refresh, which already knows how to swap
-    access_token via the refresh_token grant.
+    through to the explicit-args path. Returning a tokens dict instead of
+    asserting "expires_at > now" lets the underlying AgentRuxClient drive
+    the refresh, which already knows how to swap access_token via the
+    refresh_token grant.
+
+    The credentials file is written by ``cli.py``; we look up both the
+    new ``client_id`` field and the legacy ``script_id`` field so old
+    profiles (written before Phase 1.9) still resolve to *something*
+    sensible, even if rotation will eventually require a re-login.
     """
     if not _CREDENTIALS_PATH.exists():
         return None
@@ -72,70 +74,24 @@ def _load_cli_profile(profile: str) -> dict[str, str] | None:
     sec = cfg[profile]
     out = {
         "base_url": sec.get("base_url", ""),
-        "script_id": sec.get("script_id", ""),
+        "client_id": sec.get("client_id", "") or sec.get("script_id", ""),
         "access_token": sec.get("access_token", ""),
         "refresh_token": sec.get("refresh_token", ""),
         "expires_at": sec.get("expires_at", "0"),
-        "client_id": sec.get("client_id", ""),
     }
     if not out["access_token"]:
         return None
     return out
 
-
-def _atomic_write_section(profile: str, updates: dict[str, str]) -> None:
-    """Merge *updates* into the [*profile*] section and rewrite the file.
-
-    Caller MUST hold ``_profile_lock(profile)`` so two writers can't
-    interleave their merges. We re-read the file inside the lock so a
-    sibling that updated a different profile in parallel doesn't lose
-    its section to our overwrite.
-    """
-    cfg = configparser.ConfigParser()
-    if _CREDENTIALS_PATH.exists():
-        cfg.read(_CREDENTIALS_PATH)
-    if profile not in cfg:
-        cfg[profile] = {}
-    for k, v in updates.items():
-        cfg[profile][k] = v
-    _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=str(_CREDENTIALS_PATH.parent),
-        prefix=".credentials.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        cfg.write(tmp)
-        tmp_path = Path(tmp.name)
-    os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, _CREDENTIALS_PATH)
-
-
-def _make_persist_hook(profile: str):
-    """Build the SDK ``on_token_refreshed`` hook for *profile*.
-
-    The hook re-acquires the per-profile lock, re-reads the credentials
-    file (in case a sibling process already rotated past us), and writes
-    the new bundle back atomically. Sync-by-design: the inner section is
-    pure file-IO and does not block, so the SDK's ``await`` of a return
-    value is unnecessary; we return None so the SDK skips the await.
-    """
-
-    def hook(bundle: TokenBundle) -> None:
-        with _profile_lock(profile):
-            _atomic_write_section(
-                profile,
-                {
-                    "access_token": bundle.access_token,
-                    "refresh_token": bundle.refresh_token or "",
-                    "expires_at": str(bundle.expires_at_unix),
-                },
-            )
-
-    return hook
-
 # ── Tool definitions in OpenAI function-calling format ──────────────────
+
+_TOPIC_ID_DESC = (
+    "AgenTrux Topic ID with the `top_` prefix (e.g. 'top_019d32da-...'). "
+    "Bare UUIDs are rejected — the server-side data-plane enforces the prefix."
+)
+_EVENT_ID_DESC = (
+    "AgenTrux Event ID with the `evt_` prefix (e.g. 'evt_019d32db-...')."
+)
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -151,7 +107,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "topic_id": {
                         "type": "string",
-                        "description": "UUID of the target topic.",
+                        "description": f"Target topic. {_TOPIC_ID_DESC}",
                     },
                     "event_type": {
                         "type": "string",
@@ -179,7 +135,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "topic_id": {
                         "type": "string",
-                        "description": "UUID of the topic to read from.",
+                        "description": f"Topic to read from. {_TOPIC_ID_DESC}",
                     },
                     "limit": {
                         "type": "integer",
@@ -206,11 +162,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "topic_id": {
                         "type": "string",
-                        "description": "UUID of the topic.",
+                        "description": _TOPIC_ID_DESC,
                     },
                     "event_id": {
                         "type": "string",
-                        "description": "UUID of the event to retrieve.",
+                        "description": _EVENT_ID_DESC,
                     },
                 },
                 "required": ["topic_id", "event_id"],
@@ -231,7 +187,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "topic_id": {
                         "type": "string",
-                        "description": "UUID of the topic to watch.",
+                        "description": f"Topic to watch. {_TOPIC_ID_DESC}",
                     },
                     "timeout_seconds": {
                         "type": "integer",
@@ -252,11 +208,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 class AgenTruxToolkit:
     """Framework-agnostic AI agent toolkit for AgenTrux.
 
-    The toolkit holds an authenticated ``AgenTruxClient`` and exposes tool
+    The toolkit holds an authenticated ``AgentRuxClient`` and exposes tool
     definitions + an executor that maps tool calls to SDK operations.
     """
 
-    def __init__(self, client: AgenTruxClient) -> None:
+    def __init__(self, client: AgentRuxClient) -> None:
         self._client = client
 
     # ── Factory ──────────────────────────────────────────────────────────
@@ -269,86 +225,55 @@ class AgenTruxToolkit:
         client_id: str | None = None,
         client_secret: str | None = None,
         access_token: str | None = None,
-        refresh_token: str | None = None,
-        oauth_client_id: str | None = None,
         profile: str | None = None,
-        activation_code: str | None = None,
     ) -> AgenTruxToolkit:
         """Create an authenticated toolkit.
 
         Parameters fall back to environment variables, then to the
         device-flow credentials written by ``agentrux login``. See the
         module docstring for the resolution order.
+
+        ``client_id`` is the ``crd_<uuid>`` that
+        ``POST /auth/redeem-activation-code`` returns; ``client_secret``
+        is ``aks_<plain>`` from the same response.
         """
         base_url = base_url or os.environ.get("AGENTRUX_BASE_URL", "")
         client_id = client_id or os.environ.get("AGENTRUX_CLIENT_ID", "")
         client_secret = client_secret or os.environ.get("AGENTRUX_CLIENT_SECRET", "")
         access_token = access_token or os.environ.get("AGENTRUX_ACCESS_TOKEN", "")
-        refresh_token = refresh_token or os.environ.get("AGENTRUX_REFRESH_TOKEN", "")
-        oauth_client_id = oauth_client_id or os.environ.get("AGENTRUX_OAUTH_CLIENT_ID", "")
-        activation_code = activation_code or os.environ.get("AGENTRUX_ACTIVATION_CODE")
         profile = profile or os.environ.get("AGENTRUX_PROFILE", "default")
 
-        # Path 1: an explicit access_token wins outright. If the caller
-        # also supplied refresh_token + oauth_client_id we wire up
-        # auto-refresh; otherwise the caller is signalling they manage
-        # rotation themselves and we leave refresh disabled.
+        # Path 1: an explicit access_token wins outright. No refresh
+        # token is wired in this path because the caller is signalling
+        # they manage rotation themselves.
         if access_token:
             if not base_url:
                 raise ValueError(
                     "base_url is required when passing access_token. "
                     "Pass it directly or set AGENTRUX_BASE_URL."
                 )
-            client = await AgenTruxClient.from_access_token(
-                base_url=base_url,
-                access_token=access_token,
-                refresh_token=refresh_token or None,
-                oauth_client_id=oauth_client_id or None,
-            )
+            client = AgentRuxClient(base_url=base_url, token=access_token)
             logger.info("AgenTruxToolkit created from explicit access_token")
             return cls(client)
 
-        # Path 2: single-use activation_code → fresh client_credentials.
-        # The SDK redeems ``act_<base64>`` against /auth/activation-codes
-        # and continues via client_credentials, so the caller never
-        # touches the issued crd_/aks_ pair directly.
-        if activation_code:
-            if not base_url:
-                raise ValueError(
-                    "base_url is required when passing activation_code. "
-                    "Pass it directly or set AGENTRUX_BASE_URL."
-                )
-            client = await AgenTruxClient.from_activation_code(
-                base_url=base_url,
-                activation_code=activation_code,
-            )
-            logger.info("AgenTruxToolkit created via activation_code")
-            return cls(client)
-
-        # Path 3: OAuth 2.1 client_credentials. Used by CI / unattended
-        # installs that issued a long-lived (crd_, aks_) pair in Console.
+        # Path 2: OAuth 2.1 client_credentials (Phase 1.9+).
+        # The plugin issues /oauth/token grant_type=client_credentials
+        # lazily on first request via AgentRuxClient._ensure_token().
         if client_id and client_secret:
             if not base_url:
                 raise ValueError(
                     "base_url is required. Pass it directly or set AGENTRUX_BASE_URL."
                 )
-            client = await AgenTruxClient.from_client_credentials(
+            client = AgentRuxClient(
                 base_url=base_url,
                 client_id=client_id,
                 client_secret=client_secret,
             )
-            logger.info("AgenTruxToolkit created via client_credentials for %s", client_id)
+            logger.info("AgenTruxToolkit created via client_credentials for client_id %s", client_id)
             return cls(client)
 
-        # Path 4: device-flow profile from ``agentrux login``. We hold
-        # the per-profile lock for the load+expiry-check region so a
-        # concurrent refresh write-back can't race the load. The lock
-        # is released before we hand control to AgenTruxClient because
-        # the SDK will re-acquire it inside the persist hook on each
-        # rotation; nesting the locks across an await would block any
-        # sibling process for the toolkit's entire lifetime.
-        with _profile_lock(profile):
-            creds = _load_cli_profile(profile)
+        # Path 3: device-flow profile from ``agentrux login``.
+        creds = _load_cli_profile(profile)
         if creds is not None:
             # The CLI persisted a Bearer access_token + a refresh_token.
             # Use the persisted base_url unless the caller overrode it.
@@ -366,23 +291,15 @@ class AgenTruxToolkit:
                     "AgenTruxToolkit: profile %s access_token expired, "
                     "client will refresh via the saved refresh_token", profile,
                 )
-            stored_client_id = creds.get("client_id", "") or None
-            if stored_client_id is None and creds.get("refresh_token"):
-                logger.warning(
-                    "profile %s has a refresh_token but no client_id "
-                    "— pre-OAuth-2.1 credentials. Auto-refresh disabled. "
-                    "Re-run `agentrux login` to upgrade.", profile,
-                )
-            client = await AgenTruxClient.from_access_token(
+            client = AgentRuxClient(
                 base_url=chosen_base_url,
-                access_token=creds["access_token"],
+                token=creds["access_token"],
                 refresh_token=creds["refresh_token"] or None,
-                oauth_client_id=stored_client_id,
-                on_token_refreshed=_make_persist_hook(profile),
+                client_id_for_refresh=creds["client_id"],
             )
             logger.info(
-                "AgenTruxToolkit created from %s [%s] for script %s",
-                _CREDENTIALS_PATH, profile, creds["script_id"] or "(unknown)",
+                "AgenTruxToolkit created from %s [%s] for client %s",
+                _CREDENTIALS_PATH, profile, creds["client_id"] or "(unknown)",
             )
             return cls(client)
 
@@ -390,9 +307,7 @@ class AgenTruxToolkit:
             "No credentials found. Either:\n"
             "  - run `agentrux login` to authenticate via OAuth device flow, OR\n"
             "  - set AGENTRUX_BASE_URL + AGENTRUX_CLIENT_ID + AGENTRUX_CLIENT_SECRET, OR\n"
-            "  - set AGENTRUX_BASE_URL + AGENTRUX_ACTIVATION_CODE, OR\n"
-            "  - pass access_token=, client_id+client_secret=, activation_code=, "
-            "or profile= directly."
+            "  - pass access_token=, client_id+client_secret=, or profile= directly."
         )
 
     # ── Tool definitions ─────────────────────────────────────────────────
@@ -433,8 +348,8 @@ class AgenTruxToolkit:
     # ── Lifecycle ────────────────────────────────────────────────────────
 
     @property
-    def client(self) -> AgenTruxClient:
-        """Access the underlying AgenTruxClient."""
+    def client(self) -> AgentRuxClient:
+        """Access the underlying AgentRuxClient."""
         return self._client
 
     async def close(self) -> None:
