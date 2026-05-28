@@ -1,11 +1,17 @@
 # agentrux-agent-tools
 
-> **Beta (0.3.1b1)** -- API may change before 1.0.
+> **Beta (0.3.2b1)** -- API may change before 1.0.
 
 Framework-agnostic AI agent toolkit for
 [AgenTrux](https://github.com/agentrux/agentrux).  Exposes
 publish/subscribe/read operations as tool definitions compatible with OpenAI
 function calling, Anthropic tool_use, and any other LLM framework.
+
+## Requirements
+
+- **Python ≥ 3.12.** This package declares `requires-python = ">=3.10"`, but it
+  pulls in `agentrux-sdk>=0.3.0b2` which requires Python 3.12+. Installing on
+  3.10 or 3.11 will resolve but break at import time on `agentrux-sdk`.
 
 ## Installation
 
@@ -13,10 +19,10 @@ function calling, Anthropic tool_use, and any other LLM framework.
 pip install agentrux-agent-tools
 ```
 
-Or install from source:
+Or install from source (clone the `agentrux-plugins` repo first):
 
 ```bash
-cd plugins/agent-sdk
+cd agent-sdk
 pip install -e .
 ```
 

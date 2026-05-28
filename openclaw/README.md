@@ -17,14 +17,19 @@ a short-lived access token.
    topics you need (`commandTopicId`, `resultTopicId`), and copy the
    `client_secret`. The secret is shown exactly once.
 2. **Write `~/.agentrux/credentials.json`** (mode 0600) on the host that runs
-   OpenClaw:
+   OpenClaw. The plugin reads `script_id` + `clientSecret` (note the
+   camelCase field name) + `base_url` from this file:
    ```json
    {
      "base_url": "https://api.agentrux.com",
      "script_id": "scr_<uuid>",
-     "clientSecret": "wh07tr3I..."
+     "clientSecret": "aks_<base64>"
    }
    ```
+   The `clientSecret` is the `client_secret` returned by AgenTrux when you
+   rotate the Script credential (Console → Scripts → *your script* → Rotate
+   Credential — value starts with `aks_` and is shown exactly once). The
+   plugin uses this directly for `grant_type=client_credentials`.
 3. **Install the plugin:**
    ```bash
    npm install -g @agentrux/agentrux-openclaw-plugin@^0.15
@@ -92,7 +97,7 @@ so we never burn the rate limit with redundant client_credentials grants.
 
 - **SSE hint + Pull drain**: SSE is used as a hint only; actual events are fetched via Pull API from the waterline, eliminating event loss on SSE disconnects
 - **Inbound attachments**: Text files (≤50KB) inlined into the message; binary/large files passed as presigned URLs
-- **Outbound attachments**: LLM can upload files via `agentrux_upload` tool; attachments auto-included in response
+- **Outbound attachments**: LLM declares files via the `agentrux_deliver` tool; the plugin uploads them and auto-attaches them to the next outbound reply
 - **Per-topic waterline**: Persistent waterline per topic in `~/.agentrux/waterline.json` — crash-safe resume with no duplicates
 - **Safety Poller**: Periodic Pull fallback (default 60s) in case SSE hints are missed
 - **Two-layer dedup**: event_id (transport) + request_id (application)
@@ -100,13 +105,20 @@ so we never burn the rate limit with redundant client_credentials grants.
 
 ## Tools (LLM-callable)
 
+The plugin registers these 5 tools (verify with `openclaw plugins show agentrux-openclaw-plugin`):
+
 | Tool | Description |
 |------|-------------|
 | `agentrux_publish` | Send an event to a topic |
 | `agentrux_read` | Read events from a topic |
 | `agentrux_send_message` | Send a message and wait for reply |
-| `agentrux_redeem_grant` | Redeem an invite code for cross-Domo (cross-account) access |
-| `agentrux_upload` | Upload a local file and get a download URL (auto-attaches to response during ingress) |
+| `agentrux_redeem_grant` | Redeem an invite code for cross-account access |
+| `agentrux_deliver` | Declare a local file to attach to the next outbound reply (gateway uploads + auto-attaches; no manual upload step) |
+
+The legacy `agentrux_activate` tool was retired when the server removed the
+`/auth/activate` exchange. The plugin used to expose an `agentrux_upload`
+tool for explicit uploads; that responsibility now lives entirely in
+`agentrux_deliver`, which is invoked from the ChannelPlugin pipeline.
 
 ## Architecture
 
@@ -127,7 +139,7 @@ AgenTrux Topic ─────────────────────�
                                         ▼
                                    ChannelPlugin reply pipeline → LLM + Tools
                                         │
-                                        ├─ agentrux_upload → pendingAttachments
+                                        ├─ agentrux_deliver → pendingAttachments
                                         ▼
                                    deliver() → publish → Results Topic
                                         │         (text + attachments)
