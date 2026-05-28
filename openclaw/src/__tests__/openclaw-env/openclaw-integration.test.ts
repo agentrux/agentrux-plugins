@@ -11,12 +11,12 @@
  *   npx jest --testPathPattern='openclaw-env'
  *
  * Environment variables:
- *   AGENTRUX_BASE_URL    - AgenTrux API URL (required)
- *   AGENTRUX_SCRIPT_ID   - Script ID with topic access (required)
- *   AGENTRUX_SECRET      - Client secret (required)
- *   AGENTRUX_COMMAND_TOPIC - Command topic UUID (required)
- *   AGENTRUX_RESULT_TOPIC  - Result topic UUID (required)
- *   OPENCLAW_TIMEOUT_MS  - Timeout for LLM response (default: 60000)
+ *   AGENTRUX_BASE_URL      - AgenTrux API URL (required)
+ *   AGENTRUX_CLIENT_ID     - OAuth client_id `crd_<uuid>` (required)
+ *   AGENTRUX_CLIENT_SECRET - OAuth client_secret `aks_<plain>` (required)
+ *   AGENTRUX_COMMAND_TOPIC - Command topic `top_<uuid>` (required)
+ *   AGENTRUX_RESULT_TOPIC  - Result topic `top_<uuid>` (required)
+ *   OPENCLAW_TIMEOUT_MS    - Timeout for LLM response (default: 60000)
  */
 
 import * as http from "http";
@@ -27,14 +27,14 @@ import * as https from "https";
 // ---------------------------------------------------------------------------
 
 const BASE_URL = process.env.AGENTRUX_BASE_URL || "";
-const SCRIPT_ID = process.env.AGENTRUX_SCRIPT_ID || "";
-const CLIENT_SECRET = process.env.AGENTRUX_SECRET || "";
+const CLIENT_ID = process.env.AGENTRUX_CLIENT_ID || "";
+const CLIENT_SECRET = process.env.AGENTRUX_CLIENT_SECRET || "";
 const COMMAND_TOPIC = process.env.AGENTRUX_COMMAND_TOPIC || "";
 const RESULT_TOPIC = process.env.AGENTRUX_RESULT_TOPIC || "";
 const TIMEOUT_MS = parseInt(process.env.OPENCLAW_TIMEOUT_MS || "60000", 10);
 
 const isConfigured =
-  BASE_URL && SCRIPT_ID && CLIENT_SECRET && COMMAND_TOPIC && RESULT_TOPIC;
+  BASE_URL && CLIENT_ID && CLIENT_SECRET && COMMAND_TOPIC && RESULT_TOPIC;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
@@ -74,9 +74,42 @@ function httpJson(
 }
 
 async function getToken(): Promise<string> {
-  const r = await httpJson("POST", `${BASE_URL}/auth/token`, {
-    script_id: SCRIPT_ID,
+  // OAuth 2.1 client_credentials grant against /oauth/token (RFC 6749 §4.4,
+  // application/x-www-form-urlencoded).
+  const form = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: CLIENT_ID,
     client_secret: CLIENT_SECRET,
+  }).toString();
+  const r = await new Promise<{ status: number; data: any }>((resolve, reject) => {
+    const u = new URL(`${BASE_URL}/oauth/token`);
+    const mod = u.protocol === "https:" ? https : http;
+    const req = mod.request(
+      {
+        method: "POST",
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Length": Buffer.byteLength(form).toString(),
+        },
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (c: Buffer) => (raw += c.toString()));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode || 0, data: JSON.parse(raw) });
+          } catch {
+            resolve({ status: res.statusCode || 0, data: raw });
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.write(form);
+    req.end();
   });
   if (r.status !== 200) throw new Error(`Auth failed: ${JSON.stringify(r.data)}`);
   return r.data.access_token;
@@ -85,13 +118,15 @@ async function getToken(): Promise<string> {
 async function publishEvent(
   token: string,
   topicId: string,
-  type: string,
+  eventType: string,
   payload: Record<string, unknown>,
 ): Promise<string> {
+  // Phase 2.2 SSOT: body shape is {event_type, payload, metadata?, payload_object_id?}.
+  // topicId must carry the `top_` prefix (pipe_router enforces it).
   const r = await httpJson(
     "POST",
     `${BASE_URL}/topics/${topicId}/events`,
-    { type, payload },
+    { event_type: eventType, payload },
     { Authorization: `Bearer ${token}` },
   );
   if (r.status >= 400) throw new Error(`Publish failed: ${JSON.stringify(r.data)}`);
@@ -106,14 +141,16 @@ async function pollForResponse(
 ): Promise<any> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    // Phase 2.5a SSOT: list-events response shape is {events, next}; the
+    // optional event-type filter is `?type=...`.
     const r = await httpJson(
       "GET",
       `${BASE_URL}/topics/${topicId}/events?limit=20&type=openclaw.response`,
       undefined,
       { Authorization: `Bearer ${token}` },
     );
-    if (r.status === 200 && r.data.items) {
-      for (const item of r.data.items) {
+    if (r.status === 200 && Array.isArray(r.data.events)) {
+      for (const item of r.data.events) {
         if (item.payload?.request_id === requestId) {
           return item;
         }
@@ -182,7 +219,7 @@ describeIfConfigured("OpenClaw environment integration", () => {
     // Upload a test file
     const uploadR = await httpJson(
       "POST",
-      `${BASE_URL}/topics/${COMMAND_TOPIC}/payload`,
+      `${BASE_URL}/topics/${COMMAND_TOPIC}/payloads`,
       { content_type: "text/plain", filename: "test.txt", size: 13 },
       { Authorization: `Bearer ${token}` },
     );

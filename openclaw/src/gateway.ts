@@ -13,11 +13,12 @@
 import {
   type Credentials,
   loadCredentials,
+  saveCredentials,
   AGENTRUX_DIR,
   WATERLINE_PATH,
 } from "./credentials";
-import { pullEvents, ensureToken, invalidateToken, authRequest } from "./http-client";
-import { quarantineLegacyBootstrap } from "./activation-core";
+import { httpJson, pullEvents, ensureToken, invalidateToken, authRequest, ensureTopPrefix, PLUGIN_USER_AGENT } from "./http-client";
+import { consumeBootstrapFile, getBootstrapPath, TransientActivationError } from "./activation-core";
 import { wrapMessage } from "./sanitize";
 import { getPluginRuntime } from "./runtime";
 import {
@@ -51,31 +52,41 @@ interface ImageContent {
 
 const WATERLINE_DIR = AGENTRUX_DIR;
 
-function loadWaterlineMap(): Record<string, number> {
+// Phase 2.5a SSOT: cursor は evt_id 文字列ベース (旧 sequence_no int は廃止)。
+// in-memory compare 用に sequence_number も保持 (in-batch dedup の defense in depth)。
+// 旧 format ({ <topicId>: <int> } map) は読み捨て、 v2 ({ v: 2, w: { <topicId>: {seq, evt} } }) に切替。
+interface WaterlineEntry { sequence_number: number; event_id: string }
+type WaterlineMap = Record<string, WaterlineEntry>;
+
+function loadWaterlineMap(): WaterlineMap {
   try {
     if (fs.existsSync(WATERLINE_PATH)) {
       const data = JSON.parse(fs.readFileSync(WATERLINE_PATH, "utf-8"));
-      if (typeof data.waterline === "number") return {};
-      if (typeof data === "object" && data !== null) return data;
+      if (data && data.v === 2 && data.w && typeof data.w === "object") {
+        return data.w as WaterlineMap;
+      }
+      // 旧 format (v1 int map or even older) は無効化 → bootstrap からやり直し
     }
   } catch {}
   return {};
 }
 
-function loadWaterline(topicId: string): number | null {
+function loadWaterline(topicId: string): WaterlineEntry | null {
   const map = loadWaterlineMap();
-  return typeof map[topicId] === "number" ? map[topicId] : null;
+  const e = map[ensureTopPrefix(topicId)];
+  if (e && typeof e.event_id === "string" && typeof e.sequence_number === "number") return e;
+  return null;
 }
 
-function saveWaterline(topicId: string, waterline: number): void {
+function saveWaterline(topicId: string, entry: WaterlineEntry): void {
   try {
     if (!fs.existsSync(WATERLINE_DIR)) {
       fs.mkdirSync(WATERLINE_DIR, { recursive: true, mode: 0o700 });
     }
     const map = loadWaterlineMap();
-    map[topicId] = waterline;
+    map[ensureTopPrefix(topicId)] = entry;
     const tmp = WATERLINE_PATH + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(map), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify({ v: 2, w: map }), { mode: 0o600 });
     fs.renameSync(tmp, WATERLINE_PATH);
   } catch {}
 }
@@ -83,6 +94,13 @@ function saveWaterline(topicId: string, waterline: number): void {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export interface MessagingTopic {
+  id: string;
+  topicId: string;
+  mode: "read" | "write" | "readwrite";
+  listen: boolean;
+}
 
 export interface AgenTruxAccount {
   commandTopicId: string;
@@ -93,26 +111,47 @@ export interface AgenTruxAccount {
   maxConcurrency: number;
   subagentTimeoutMs: number;
   execPolicy: { enabled: boolean; allowedCommands: string[] };
+  messagingTopics: MessagingTopic[];
+  // Skip events the caller's own Script produced (`?exclude_self=true`).
+  // Default true; required whenever command/result/messaging topics
+  // overlap (read+write the same topic) to avoid self-echo loops.
+  excludeOwnEvents: boolean;
+  // When false (default), every gateway start skips to the latest event so a
+  // backlog accumulated while offline isn't replayed. Set true only when the
+  // agent must process every event since the last shutdown (durable consumer
+  // semantics) — risky for chat-style workloads.
+  resumeFromLastSeq: boolean;
 }
 
+// payload.attachments[] のユーザ定義 schema。
+// 新 spec で `payload_object_id` / `presigned_get_url` を優先、 旧 `object_id` / `download_url`
+// も受け入れる (他 agent が古い shape で publish する間の互換)。
 interface AgenTruxAttachment {
   name: string;
-  object_id: string;
+  payload_object_id?: string;       // new spec (pob_<uuid>)
+  object_id?: string;                // legacy (旧 plugins 由来)
   content_type: string;
-  download_url?: string;
+  presigned_get_url?: string;       // new spec
+  download_url?: string;             // legacy
 }
 
 interface AgenTruxEvent {
   event_id: string;
-  sequence_no: number;
-  type: string;
+  sequence_number: number;          // Phase 2.5a SSOT、 旧 sequence_no は廃止
+  event_type: string;                // Phase 2.2 SSOT、 旧 type は廃止
   payload: {
     request_id?: string;
     conversation_key?: string;
     message?: string;
     text?: string;
+    // Composer SPA's `composer.text` event publishes `{content, format}`
+    // — Composer adapter reads `content` when message/text are absent.
+    content?: string;
+    format?: string;
     attachments?: AgenTruxAttachment[];
   };
+  metadata?: Record<string, unknown>;
+  payload_object_id?: string;       // event-level object_ref (Phase 2.2 SSOT)
 }
 
 const TEXT_CONTENT_TYPES = /^(text\/|application\/json|application\/xml|application\/javascript|application\/typescript)/;
@@ -151,37 +190,91 @@ export const agentruxGateway = {
     } = channelRT.reply;
     const { recordInboundSession, resolveStorePath } = channelRT.session;
 
-    // 1. Credentials must be pre-provisioned at ~/.agentrux/credentials.json.
+    // 1. Credentials: load existing, OR consume a one-shot BOOTSTRAP.md.
     //
-    //    Onboarding has moved to the OAuth 2.1 device flow + manual
-    //    Console-side credential issuance (`project_oauth_greenfield_
-    //    2026_05_05.md`). The plugin no longer self-activates because
-    //    the legacy /auth/activate endpoint is gone (404 on the new
-    //    backend).
+    //    Activation flow (mirrors OpenClaw's own ~/.openclaw/workspace/
+    //    BOOTSTRAP.md ritual — see https://docs.openclaw.ai/start/bootstrapping):
     //
-    //    A leftover ~/.agentrux/BOOTSTRAP.md from the AC era is a
-    //    common case on existing installs. We refuse to silently
-    //    ignore it — that would surface as "channel never started"
-    //    with no breadcrumb. Instead we rename it to
-    //    BOOTSTRAP.md.legacy-<ts> and log why.
+    //      a. If ~/.agentrux/credentials.json exists, load it. Done.
+    //      b. Else if ~/.agentrux/BOOTSTRAP.md exists, read its activation
+    //         code, exchange it for credentials by calling
+    //         /auth/redeem-activation-code exactly once, write
+    //         credentials.json atomically, and DELETE the bootstrap file so
+    //         the ritual never runs twice.
+    //      c. Else (no creds, no bootstrap file): channel disabled.
+    //
+    //    Why this design (vs. an activationCode field in openclaw.json):
+    //
+    //    - openclaw.json is a permanent config file, but the activation
+    //      code is single-use and time-limited. Holding it in config means
+    //      it gets quoted/copied/cached and survives long after it has been
+    //      consumed.
+    //    - OpenClaw's auto-restart loop (10 attempts, exponential backoff)
+    //      treats any "channel exited" event as cause for retry. A 4xx from
+    //      /auth/redeem-activation-code is permanent, but a config-driven activation has
+    //      no way to mark "this code is dead" — it would burn the rate
+    //      limit forever. The BOOTSTRAP.md pattern handles this by renaming
+    //      the file to BOOTSTRAP.md.failed-<ts> on a 4xx, so the next loop
+    //      iteration sees no file and goes quiet.
+    //    - For 5xx / network failures the file is left untouched and we
+    //      THROW so the auto-restart loop kicks in and retries — that is
+    //      the correct behavior for transient errors.
+    //
+    //    The contract is pinned in src/__tests__/bootstrap.test.ts.
     invalidateToken();
-    const creds = loadCredentials();
+    let creds = loadCredentials();
     if (!creds) {
+      const baseUrl = account.baseUrl || "https://api.agentrux.com";
+      let bootstrap;
       try {
-        const q = quarantineLegacyBootstrap();
-        if (q.kind === "quarantined") {
-          log?.warn?.(
-            `[agentrux] Found legacy ${q.movedFrom} from the activation-code era. The /auth/activate endpoint has been retired; that file is no longer functional. Renamed to ${q.movedTo} so it does not confuse future runs.`,
-          );
-        }
+        bootstrap = await consumeBootstrapFile({ baseUrl });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log?.warn?.(`[agentrux] Could not quarantine legacy BOOTSTRAP.md: ${msg}`);
+        if (err instanceof TransientActivationError) {
+          // Re-throw so OpenClaw treats this as a crash and the auto-restart
+          // loop retries. The BOOTSTRAP.md file is still in place so the
+          // next attempt can succeed.
+          log?.error?.(`[agentrux] ${err.message}`);
+          throw err;
+        }
+        throw err;
       }
-      log?.warn?.(
-        `[agentrux] No credentials at ~/.agentrux/credentials.json — channel disabled. Issue a Script credential in the AgenTrux Console and write its base_url + script_id + clientSecret to that file, or run \`agentrux login\` from the SDK CLI.`,
-      );
-      return;
+
+      if (bootstrap.kind === "ok") {
+        log?.info?.(
+          `[agentrux] Activated via ${getBootstrapPath()}: script_id=${bootstrap.credentials.script_id}`,
+        );
+        creds = bootstrap.credentials;
+      } else if (bootstrap.kind === "permanent-failure") {
+        log?.error?.(
+          `[agentrux] BOOTSTRAP.md activation rejected (HTTP ${bootstrap.httpStatus} ${bootstrap.errorCode}): ${bootstrap.errorMessage}`,
+        );
+        log?.error?.(
+          `[agentrux] Quarantined to ${bootstrap.failedFilePath}. Issue a new activation code and write it to ${getBootstrapPath()}.`,
+        );
+        return;
+      } else if (bootstrap.kind === "validation-failure") {
+        log?.error?.(
+          `[agentrux] BOOTSTRAP.md is malformed: ${bootstrap.reason}. Quarantined to ${bootstrap.failedFilePath}.`,
+        );
+        return;
+      } else if (bootstrap.kind === "creds-already-present") {
+        // This branch should be impossible because we are in the
+        // `if (!creds)` block, but keep it explicit so the type checker
+        // is happy and so a future refactor cannot lose the distinction.
+        log?.warn?.(
+          `[agentrux] BOOTSTRAP.md found alongside existing credentials.json — quarantined to ${bootstrap.failedFilePath} without calling /auth/redeem-activation-code (would burn the single-use code).`,
+        );
+        return;
+      } else {
+        // bootstrap.kind === "no-file"
+        log?.warn?.(
+          "[agentrux] No credentials at ~/.agentrux/credentials.json — channel disabled.",
+        );
+        log?.warn?.(
+          `[agentrux] To activate: write your one-time activation code to ${getBootstrapPath()} and restart the gateway.`,
+        );
+        return;
+      }
     }
 
     // 2. Waterline
@@ -189,36 +282,46 @@ export const agentruxGateway = {
     const processedEvents = new Set<string>();
     let reconnectAttempts = 0;
 
-    const saved = loadWaterline(topicId);
-    let waterline: number;
+    // Phase 2.5a SSOT: waterline は { sequence_number, event_id }。 event_id を ?after= に渡す。
+    // Default behavior on (re)start: skip to the latest event so a long
+    // backlog isn't replayed every time the gateway is restarted. The saved
+    // disk waterline is used only when `resumeFromLastSeq` is opted-in (rare
+    // — e.g., durable consumer-group semantics required).
+    const saved = account.resumeFromLastSeq ? loadWaterline(topicId) : null;
+    let waterline: WaterlineEntry;
     if (saved !== null) {
       waterline = saved;
-      log?.info?.(`[agentrux] Resuming from saved waterline=${waterline} topic=${topicId}`);
+      log?.info?.(`[agentrux] Resuming from saved waterline seq=${waterline.sequence_number} evt=${waterline.event_id} topic=${topicId}`);
     } else {
-      waterline = 0;
+      waterline = { sequence_number: 0, event_id: "" };
       try {
-        let cursor = 0;
-        while (true) {
-          const batch = await pullEvents(creds, account.commandTopicId, cursor, 50);
-          if (batch.length === 0) break;
-          cursor = batch[batch.length - 1].sequence_no;
+        // Skip to latest. desc + limit=1 で最新を 1 件取得。
+        const latestBatch = await pullEvents(creds, account.commandTopicId, null, 1, "desc", { excludeSelf: account.excludeOwnEvents });
+        if (latestBatch.length > 0) {
+          const e = latestBatch[0];
+          waterline = {
+            sequence_number: Number(e.sequence_number || 0),
+            event_id: String(e.event_id || ""),
+          };
+          saveWaterline(topicId, waterline);
+          log?.info?.(`[agentrux] Startup: skipped to latest seq=${waterline.sequence_number} evt=${waterline.event_id}`);
+        } else {
+          log?.info?.(`[agentrux] Startup: topic is empty, waterline initialized empty`);
         }
-        waterline = cursor;
-        saveWaterline(topicId, waterline);
-        log?.info?.(`[agentrux] First startup: skipped to waterline=${waterline}`);
       } catch (err: any) {
-        log?.warn?.(`[agentrux] Failed to fetch initial waterline: ${err?.message}. Starting from 0.`);
+        log?.warn?.(`[agentrux] Failed to fetch initial waterline: ${err?.message}. Starting empty.`);
       }
     }
 
-    // 3. Pull-based event drain
+    // 3. Pull-based event drain (waterline.event_id を ?after= cursor として使う)
     let drainRunning = false;
     const drainEvents = async (): Promise<void> => {
       if (drainRunning) return;
       drainRunning = true;
       try {
         while (!abortSignal.aborted) {
-          const batch = await pullEvents(creds!, account.commandTopicId, waterline);
+          const afterEvtId = waterline.event_id || null;
+          const batch = await pullEvents(creds!, account.commandTopicId, afterEvtId, 20, "asc", { excludeSelf: account.excludeOwnEvents });
           if (batch.length === 0) break;
           for (const event of batch as AgenTruxEvent[]) {
             if (abortSignal.aborted) break;
@@ -235,20 +338,26 @@ export const agentruxGateway = {
     const MAX_RETRIES = 3;
 
     const processEvent = async (event: AgenTruxEvent): Promise<void> => {
-      if (event.sequence_no <= waterline) return;
+      if (event.sequence_number <= waterline.sequence_number) return;
       if (processedEvents.has(event.event_id)) return;
 
       const payload = event.payload;
-      if (!payload?.message && !payload?.text) {
+      // Accept three inbound message shapes:
+      //   (legacy openclaw)  payload.message / payload.text
+      //   (AgenTrux Composer composer.text)  payload.content
+      // Composer adapter: a `composer.text` event publishes
+      // `{content, format}` instead of `{message}`, and the reply must go
+      // back as `composer.text` so the SPA renders it. The inbound type is
+      // stashed on ActiveRequest so publishOutboundPayload can match.
+      const rawMessage = payload?.message ?? payload?.text ?? payload?.content ?? "";
+      if (!rawMessage) {
         advanceWaterline(event);
         return;
       }
+      const conversationKey = payload?.conversation_key ?? "default";
+      const requestId = payload?.request_id ?? event.event_id;
 
-      const rawMessage = payload.message ?? payload.text ?? "";
-      const conversationKey = payload.conversation_key ?? "default";
-      const requestId = payload.request_id ?? event.event_id;
-
-      log?.info?.(`[agentrux] Processing event ${event.event_id} seq=${event.sequence_no} req=${requestId}`);
+      log?.info?.(`[agentrux] Processing event ${event.event_id} seq=${event.sequence_number} req=${requestId}`);
 
       // --- SDK dispatch (following openclaw-nostr pattern) ---
       const cfg = loadConfig();
@@ -271,6 +380,7 @@ export const agentruxGateway = {
         requestId,
         conversationKey,
         resultTopicId: account.resultTopicId,
+        inboundEventType: event.event_type,
       });
 
       const route = resolveAgentRoute({
@@ -405,8 +515,11 @@ export const agentruxGateway = {
 
     const advanceWaterline = (event: AgenTruxEvent): void => {
       processedEvents.add(event.event_id);
-      if (event.sequence_no > waterline) {
-        waterline = event.sequence_no;
+      if (event.sequence_number > waterline.sequence_number) {
+        waterline = {
+          sequence_number: event.sequence_number,
+          event_id: event.event_id,
+        };
         saveWaterline(topicId, waterline);
       }
       if (processedEvents.size > 10_000) {
@@ -422,18 +535,25 @@ export const agentruxGateway = {
       while (!abortSignal.aborted) {
         try {
           const token = await ensureToken(creds!);
-          const url = new URL(`${creds!.base_url}/topics/${account.commandTopicId}/events/stream`);
-          if (waterline > 0) url.searchParams.set("after_sequence_no", String(waterline));
+          const url = new URL(`${creds!.base_url}/topics/${ensureTopPrefix(account.commandTopicId)}/events/stream`);
+          if (account.excludeOwnEvents) url.searchParams.set("exclude_self", "true");
+          // Phase 2.5b SSOT: SSE resume は Last-Event-ID header (?after= は initial cursor として無視される)
+          // url のクエリには cursor 不要、 ヘッダで送る。
           const mod = url.protocol === "https:" ? https : http;
 
           await new Promise<void>((resolve, reject) => {
+            const sseHeaders: Record<string, string> = {
+              Authorization: `Bearer ${token}`,
+              Accept: "text/event-stream",
+              "Cache-Control": "no-cache",
+              "User-Agent": PLUGIN_USER_AGENT,
+            };
+            if (waterline.event_id) {
+              sseHeaders["Last-Event-ID"] = waterline.event_id;
+            }
             const req = mod.request(url, {
               method: "GET",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "text/event-stream",
-                "Cache-Control": "no-cache",
-              },
+              headers: sseHeaders,
             }, (res) => {
               if (res.statusCode === 401) {
                 invalidateToken();
@@ -499,9 +619,144 @@ export const agentruxGateway = {
       }
     };
 
-    // 7. Start
-    log?.info?.(`[agentrux] Gateway starting: topic=${account.commandTopicId} agent=${account.agentId}`);
-    await Promise.all([sseLoop(), pollerLoop()]);
+    // 7. Messaging topic SSE listeners (listen: true only)
+    const messagingSseLoops: Promise<void>[] = [];
+    for (const mt of account.messagingTopics) {
+      if (!mt.listen) continue;
+      if (mt.mode === "write") continue; // write-only topics don't need SSE
+      const mtTopicId = mt.topicId;
+      const mtId = mt.id;
+
+      // Each listening messaging topic gets its own waterline + SSE loop.
+      // Events are NOT dispatched to the agent — they are stored in a
+      // per-topic buffer that agentrux_read can consume. The SSE is purely
+      // a notification mechanism so agentrux_read returns fresh data.
+      //
+      // Same skip-to-latest-on-startup policy as the command topic above:
+      // ignore any persisted waterline unless `resumeFromLastSeq` was opted
+      // in. Saved file is overwritten below.
+      const mtSaved = account.resumeFromLastSeq ? loadWaterline(mtTopicId) : null;
+      let mtWaterline: WaterlineEntry = mtSaved ?? { sequence_number: 0, event_id: "" };
+      if (!mtWaterline.event_id) {
+        try {
+          const latestBatch = await pullEvents(creds!, mtTopicId, null, 1, "desc", { excludeSelf: account.excludeOwnEvents });
+          if (latestBatch.length > 0) {
+            const e = latestBatch[0];
+            mtWaterline = {
+              sequence_number: Number(e.sequence_number || 0),
+              event_id: String(e.event_id || ""),
+            };
+            saveWaterline(mtTopicId, mtWaterline);
+            log?.info?.(`[agentrux] Messaging topic "${mtId}" skipped to latest seq=${mtWaterline.sequence_number} evt=${mtWaterline.event_id}`);
+          }
+        } catch (err: any) {
+          log?.warn?.(`[agentrux] Messaging topic "${mtId}" waterline init failed: ${err?.message}`);
+        }
+      }
+
+      const mtSseLoop = async (): Promise<void> => {
+        let mtReconnectAttempts = 0;
+        while (!abortSignal.aborted) {
+          try {
+            const token = await ensureToken(creds!);
+            const url = new URL(`${creds!.base_url}/topics/${ensureTopPrefix(mtTopicId)}/events/stream`);
+            if (account.excludeOwnEvents) url.searchParams.set("exclude_self", "true");
+            const mod = url.protocol === "https:" ? https : http;
+            const mtSseHeaders: Record<string, string> = {
+              Authorization: `Bearer ${token}`,
+              Accept: "text/event-stream",
+              "Cache-Control": "no-cache",
+              "User-Agent": PLUGIN_USER_AGENT,
+            };
+            if (mtWaterline.event_id) {
+              mtSseHeaders["Last-Event-ID"] = mtWaterline.event_id;
+            }
+
+            await new Promise<void>((resolve, reject) => {
+              const req = mod.request(url, {
+                method: "GET",
+                headers: mtSseHeaders,
+              }, (res) => {
+                if (res.statusCode === 401) {
+                  invalidateToken();
+                  res.resume();
+                  reject(new Error("SSE auth expired"));
+                  return;
+                }
+                if (res.statusCode !== 200) {
+                  res.resume();
+                  reject(new Error(`SSE HTTP ${res.statusCode}`));
+                  return;
+                }
+                mtReconnectAttempts = 0;
+                log?.info?.(`[agentrux] Messaging topic "${mtId}" SSE connected`);
+
+                // Guard against concurrent drains from rapid SSE hints
+                let mtDrainRunning = false;
+                const drainMessagingTopic = async () => {
+                  if (mtDrainRunning) return;
+                  mtDrainRunning = true;
+                  try {
+                    while (!abortSignal.aborted) {
+                      const batch = await pullEvents(creds!, mtTopicId, mtWaterline.event_id || null, 20, "asc", { excludeSelf: account.excludeOwnEvents });
+                      if (batch.length === 0) break;
+                      for (const event of batch as AgenTruxEvent[]) {
+                        // Future: dispatch via OpenClaw hook (onEvent: "dispatch")
+                        // For now, advance waterline per event so agentrux_read
+                        // sees fresh data and no events are skipped.
+                        mtWaterline = {
+                          sequence_number: event.sequence_number,
+                          event_id: event.event_id,
+                        };
+                      }
+                      saveWaterline(mtTopicId, mtWaterline);
+                      log?.info?.(`[agentrux] Messaging topic "${mtId}" drained ${batch.length} events, waterline seq=${mtWaterline.sequence_number}`);
+                    }
+                  } catch (err: any) {
+                    log?.warn?.(`[agentrux] Messaging topic "${mtId}" drain error: ${err?.message}`);
+                  } finally {
+                    mtDrainRunning = false;
+                  }
+                };
+
+                let buffer = "";
+                res.on("data", (chunk: Buffer) => {
+                  buffer += chunk.toString();
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+                  for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                      drainMessagingTopic();
+                      break;
+                    }
+                  }
+                });
+                res.on("end", () => resolve());
+                res.on("error", reject);
+              });
+              req.on("error", reject);
+              const onAbort = () => { req.destroy(); resolve(); };
+              abortSignal.addEventListener("abort", onAbort, { once: true });
+              req.on("close", () => abortSignal.removeEventListener("abort", onAbort));
+              req.end();
+            });
+          } catch (err: any) {
+            if (abortSignal.aborted) break;
+            log?.warn?.(`[agentrux] Messaging topic "${mtId}" SSE disconnected: ${err?.message ?? err}`);
+          }
+          if (abortSignal.aborted) break;
+          const delay = Math.min(1000 * Math.pow(2, mtReconnectAttempts), 60_000);
+          mtReconnectAttempts++;
+          await sleep(delay, abortSignal);
+        }
+      };
+      messagingSseLoops.push(mtSseLoop());
+      log?.info?.(`[agentrux] Messaging topic "${mtId}" (${mtTopicId}) SSE listener started`);
+    }
+
+    // 8. Start
+    log?.info?.(`[agentrux] Gateway starting: topic=${account.commandTopicId} agent=${account.agentId} messagingTopics=${account.messagingTopics.length}`);
+    await Promise.all([sseLoop(), pollerLoop(), ...messagingSseLoops]);
     log?.info?.("[agentrux] Gateway stopped");
   },
 };
@@ -561,19 +816,22 @@ async function resolveAttachments(
   const images: ImageContent[] = [];
 
   for (const att of attachments) {
-    let downloadUrl = att.download_url;
-    if (!downloadUrl && att.object_id) {
+    // Phase 2.4c SSOT: 新 spec field 名は presigned_get_url / payload_object_id。
+    // 旧 plugin 由来の payload は download_url / object_id を持つので両方フォールバック。
+    let downloadUrl = att.presigned_get_url || att.download_url;
+    const pobId = att.payload_object_id || att.object_id;
+    if (!downloadUrl && pobId) {
       try {
-        const payloadInfo = await authRequest(creds, "GET", `/topics/${topicId}/payloads/${att.object_id}`);
-        downloadUrl = payloadInfo.download_url;
-        log?.info?.(`[agentrux] Resolved download_url for ${att.name} (${att.object_id})`);
+        const payloadInfo = await authRequest(creds, "GET", `/topics/${ensureTopPrefix(topicId)}/payloads/${pobId}`);
+        downloadUrl = payloadInfo.presigned_get_url || payloadInfo.download_url;
+        log?.info?.(`[agentrux] Resolved presigned_get_url for ${att.name} (${pobId})`);
       } catch (err: any) {
-        log?.warn?.(`[agentrux] Failed to resolve download_url for ${att.name}: ${err?.message}`);
+        log?.warn?.(`[agentrux] Failed to resolve presigned_get_url for ${att.name}: ${err?.message}`);
       }
     }
 
     if (!downloadUrl) {
-      blocks.push(`[添付: ${att.name}] (download_url 取得不可)`);
+      blocks.push(`[添付: ${att.name}] (presigned_get_url 取得不可)`);
       continue;
     }
 
@@ -643,7 +901,7 @@ async function resolveAttachments(
           const workspaceDir = path.join(os.homedir(), ".openclaw", "workspace", "agentrux-inbound");
           fs.mkdirSync(workspaceDir, { recursive: true });
           const safeName = att.name.replace(/[^A-Za-z0-9._-]/g, "_");
-          const localPath = path.join(workspaceDir, `${att.object_id || Date.now()}-${safeName}`);
+          const localPath = path.join(workspaceDir, `${att.payload_object_id || att.object_id || Date.now()}-${safeName}`);
           fs.writeFileSync(localPath, buffer);
           blocks.push(
             `[受信画像: ${att.name}]\n` +
@@ -688,7 +946,10 @@ function fetchUrl(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === "https:" ? https : http;
-    const req = mod.request(u, { method: "GET" }, (res) => {
+    const req = mod.request(u, {
+      method: "GET",
+      headers: { "User-Agent": PLUGIN_USER_AGENT },
+    }, (res) => {
       if (res.statusCode && res.statusCode >= 400) {
         res.resume();
         reject(new Error(`HTTP ${res.statusCode}`));

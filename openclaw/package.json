@@ -1,6 +1,6 @@
 {
   "name": "@agentrux/agentrux-openclaw-plugin",
-  "version": "0.15.0",
+  "version": "1.0.19",
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
   "keywords": [
     "openclaw",

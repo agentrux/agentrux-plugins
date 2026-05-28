@@ -1,9 +1,9 @@
 /**
- * Token naming correctness tests for the OpenClaw plugin.
+ * Token naming correctness tests for the OpenClaw plugin (Phase 1.9+).
  *
- * Verifies that the plugin uses the final unified naming:
- * clientSecret, activation_code, inv_, ac_, api.agentrux.com.
- * Ensures no legacy names (secret, token as activation param,
+ * Verifies that the plugin uses the OAuth 2.1 naming:
+ * client_secret (snake_case), activation_code, act_ prefix,
+ * api.agentrux.com. Ensures no legacy names (secret, atk_/gtk_,
  * process.env.HOME for credentials path) remain.
  */
 
@@ -21,34 +21,89 @@ const credentialsSource = fs.readFileSync(CREDENTIALS_PATH, "utf-8");
 const source = indexSource + "\n" + credentialsSource;
 
 // ---------------------------------------------------------------------------
+// Capture tool registrations by mocking the api object
+// ---------------------------------------------------------------------------
+
+interface RegisteredTool {
+  name: string;
+  description: string;
+  parameters: any;
+  execute: (...args: any[]) => Promise<any>;
+}
+
+function captureTools(): RegisteredTool[] {
+  const tools: RegisteredTool[] = [];
+  const fakeApi = {
+    registerTool(def: any, _opts?: any) {
+      tools.push(def);
+    },
+  };
+
+  // Import the default export and invoke its register() method.
+  // The plugin is exported as an object: { id, name, register(api) }.
+  jest.isolateModules(() => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pluginModule = require("../index");
+    const plugin = pluginModule.default || pluginModule;
+    if (typeof plugin === "function") {
+      plugin(fakeApi);
+    } else if (typeof plugin.register === "function") {
+      plugin.register(fakeApi);
+    } else {
+      throw new Error("Plugin export is neither a function nor an object with register()");
+    }
+  });
+
+  return tools;
+}
+
+function findTool(tools: RegisteredTool[], name: string) {
+  return tools.find((t) => t.name === name);
+}
+
+// ---------------------------------------------------------------------------
 // Credential interface
 // ---------------------------------------------------------------------------
 
 describe("Credentials interface", () => {
-  test("has clientSecret field (not secret)", () => {
-    // Check the Credentials interface definition in credentials source
-    expect(credentialsSource).toContain("clientSecret: string");
-    // Must not have a bare "secret: string" field in the interface
+  test("has snake_case OAuth 2.1 fields (client_id + client_secret)", () => {
+    // OAuth 2.1 client_credentials uses snake_case form fields.
+    expect(credentialsSource).toContain("client_id: string");
+    expect(credentialsSource).toContain("client_secret: string");
+    // Must not have a bare "secret: string" field or the old camelCase form.
     expect(credentialsSource).not.toMatch(/^\s+secret:\s+string/m);
+    expect(credentialsSource).not.toMatch(/^\s+clientSecret:\s+string/m);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Activation flow removed
+// Activate tool parameter naming
 // ---------------------------------------------------------------------------
 
-describe("Activation flow removed", () => {
-  test("agentrux_activate tool no longer declared in source", () => {
-    expect(indexSource).not.toContain('name: "agentrux_activate"');
-    expect(indexSource).not.toContain("'agentrux_activate'");
+describe("Activate tool", () => {
+  let tools: RegisteredTool[];
+  let activateTool: RegisteredTool | undefined;
+
+  beforeAll(() => {
+    tools = captureTools();
+    activateTool = findTool(tools, "agentrux_activate");
   });
 
-  test("source no longer calls retired activation endpoint", () => {
-    // The bare ``/auth/activate`` string would mean the plugin still
-    // tries to talk to the deleted endpoint. Tolerate the prose
-    // mention of "activation" / "activation-code era" in comments.
-    expect(indexSource).not.toMatch(/["`']\/auth\/activate["`']/);
-    expect(indexSource).not.toMatch(/POST.*\/auth\/activate/);
+  test("activate tool exists", () => {
+    expect(activateTool).toBeDefined();
+  });
+
+  test("parameter is activation_code (not token)", () => {
+    const props = activateTool!.parameters.properties;
+    expect(props).toHaveProperty("activation_code");
+    // "token" should not be the parameter name for activation
+    expect(props).not.toHaveProperty("activation_token");
+  });
+
+  test("activation_code description references act_ prefix (Phase 1.9+)", () => {
+    const desc = activateTool!.parameters.properties.activation_code.description;
+    expect(desc).toContain("act_");
+    expect(desc).not.toContain("atk_");
   });
 });
 

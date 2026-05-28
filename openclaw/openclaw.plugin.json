@@ -15,12 +15,37 @@
       "pollIntervalMs": { "type": "number", "default": 60000, "description": "Safety poller interval in ms (default 60s)" },
       "maxConcurrency": { "type": "number", "default": 3 },
       "subagentTimeoutMs": { "type": "number", "default": 120000 },
+      "excludeOwnEvents": {
+        "type": "boolean",
+        "default": true,
+        "description": "Skip events produced by this Script (server-side `?exclude_self=true`). Required when command and result topics overlap (read+write the same topic) to prevent self-echo loops."
+      },
+      "resumeFromLastSeq": {
+        "type": "boolean",
+        "default": false,
+        "description": "When false (default), every gateway start skips to the latest event so backlog accumulated while offline is not replayed (chat-style workloads). Set true only for durable consumer-group semantics where every event since shutdown must be processed."
+      },
       "execPolicy": {
         "type": "object",
         "description": "Controls exec tool availability for the ingress agent",
         "properties": {
           "enabled": { "type": "boolean", "default": false, "description": "Enable exec tool (default: disabled)" },
           "allowedCommands": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Regex patterns for allowed commands" }
+        }
+      },
+      "messagingTopics": {
+        "type": "array",
+        "default": [],
+        "description": "Loosely-coupled messaging topics (independent of the command/result pair)",
+        "items": {
+          "type": "object",
+          "required": ["id", "topicId", "mode"],
+          "properties": {
+            "id": { "type": "string", "description": "Logical name for this topic (e.g. 'sensor-data', 'alerts')" },
+            "topicId": { "type": "string", "description": "AgenTrux topic UUID" },
+            "mode": { "type": "string", "enum": ["read", "write", "readwrite"], "description": "Access mode: read, write, or readwrite" },
+            "listen": { "type": "boolean", "default": false, "description": "Start SSE listener for real-time push (default: false, pull-only)" }
+          }
         }
       }
     }
