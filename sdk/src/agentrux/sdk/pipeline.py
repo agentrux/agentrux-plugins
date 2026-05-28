@@ -1,119 +1,141 @@
-"""MessagePipeline - Integrates deduplication, reordering, gap fill, and flow control."""
+"""Pipeline — read → transform → publish chain.
+
+SSOT: docs/04_design/sdk/sdk_design.md §6
+
+invariant:
+- at-least-once 配送 (重複あり得る、 transform で idempotency_key 継承推奨)
+- checkpoint は処理成功 event のみ commit
+- gap 検出時は GapDetectedError で run 中断 (re-replay は ops 判断)
+- source_topic と sink_topic が同じ場合の loop は caller 責務 (本 SDK は検出しない)
+"""
+
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
-from agentrux.sdk.deduplicator import Deduplicator
-from agentrux.sdk.envelope import MessageEnvelope
-from agentrux.sdk.flow_controller import FlowController
+from agentrux.sdk.checkpoint import CheckpointStore, InMemoryCheckpointStore
+from agentrux.sdk.errors import ValidationError
+from agentrux.sdk.gap_detector import SequenceGapDetector
+from agentrux.sdk.models import Event, PublishResult
 from agentrux.sdk.reorder_buffer import ReorderBuffer
-from agentrux.sdk.stats import PipelineStats
 
 if TYPE_CHECKING:
-    from agentrux.sdk.gap_detector import GapDetector
+    from agentrux.sdk.facade import AgentRuxClient
 
-logger = logging.getLogger("agentrux.sdk.pipeline")
+TransformFn = Callable[[Event], Awaitable[dict | bytes | None]]
 
 
-class MessagePipeline:
-    """Deduplicator -> ReorderBuffer -> (GapDetector) -> FlowController.
-
-    GapDetector is optional. When provided, the pipeline checks for gaps
-    after each insert and backfills them via the by-sequence REST API.
-    Backfilled events are routed back through Dedup -> Reorder so the
-    FlowController only ever sees a single ordered stream.
-    """
+class Pipeline:
+    """read source → transform → publish sink を 1 process で実行."""
 
     def __init__(
         self,
-        deduplicator: Deduplicator | None = None,
+        client: AgentRuxClient,
+        *,
+        source_topic: str,
+        sink_topic: str,
+        transform: TransformFn,
+        checkpoint_store: CheckpointStore | None = None,
+        gap_detector: SequenceGapDetector | None = None,
         reorder_buffer: ReorderBuffer | None = None,
-        flow_controller: FlowController | None = None,
-        gap_detector: "GapDetector | None" = None,
-    ):
-        self._dedup = deduplicator or Deduplicator()
-        self._reorder = reorder_buffer or ReorderBuffer()
-        self._flow = flow_controller or FlowController()
-        self._gap_detector = gap_detector
-        self._topic_id: str | None = None
+        mode: str = "pull",  # "pull" | "sse" | "hybrid"
+        pull_limit: int = 100,
+        pull_interval_seconds: float = 1.0,
+    ) -> None:
+        if not source_topic.startswith("top_") or not sink_topic.startswith("top_"):
+            raise ValidationError("source_topic and sink_topic must start with 'top_'")
+        if mode not in ("pull", "sse", "hybrid"):
+            raise ValidationError(f"mode must be 'pull'/'sse'/'hybrid' (got {mode!r})")
 
-    def set_topic_id(self, topic_id: str) -> None:
-        self._topic_id = topic_id
+        self._client = client
+        self._src = source_topic
+        self._sink = sink_topic
+        self._transform = transform
+        self._cp: CheckpointStore = checkpoint_store or InMemoryCheckpointStore()
+        self._gap: SequenceGapDetector | None = gap_detector
+        self._buf: ReorderBuffer | None = reorder_buffer
+        self._mode = mode
+        self._pull_limit = pull_limit
+        self._pull_interval = pull_interval_seconds
+        self._stopped = False
 
-    def set_initial_sequence(self, seq: int) -> list[MessageEnvelope]:
-        """Set initial expected sequence for the reorder buffer.
+    async def run(self, *, max_events: int | None = None) -> int:
+        """run loop. max_events 指定で N 件処理後 return (test 用)。
 
-        Returns any messages now deliverable from the new position
-        (non-empty only on forward jumps after gap-fill).
+        Returns: 処理成功 (publish 完了) した event 数
         """
-        return self._reorder.set_initial_sequence(seq)
+        processed = 0
+        last_cp = await self._cp.load(self._src)
 
-    async def process(self, msg: MessageEnvelope) -> list[MessageEnvelope]:
-        """Process a message through the full pipeline.
+        iterator = self._make_iter(last_event_id=last_cp)
+        try:
+            async for evt in iterator:
+                if self._gap is not None:
+                    self._gap.observe(evt.sequence_number, topic_id=self._src)
 
-        Returns list of messages ready for delivery (in order).
+                events_to_emit = await self._maybe_reorder(evt)
+                for in_order_evt in events_to_emit:
+                    transformed = await self._transform(in_order_evt)
+                    if transformed is None:
+                        # filter (transform 戻り None) → checkpoint だけ進める
+                        await self._cp.commit(self._src, in_order_evt.event_id)
+                        continue
+                    await self._publish(transformed, source_evt=in_order_evt)
+                    await self._cp.commit(self._src, in_order_evt.event_id)
+                    processed += 1
+                    if max_events is not None and processed >= max_events:
+                        self._stopped = True
+                        return processed
+                if self._stopped:
+                    return processed
+        finally:
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                await close()
 
-        Order-preservation rule: backfilled events from GapDetector go
-        back through Dedup -> Reorder, never directly to FlowController.
-        FlowController is the single output of ReorderBuffer.
-        """
-        # 1. Deduplication
-        if self._dedup.is_duplicate(msg.event_id):
-            logger.debug("Duplicate dropped: %s", msg.event_id)
-            return []
-        self._dedup.mark_seen(msg.event_id)
+        return processed
 
-        # 2. Reorder buffer
-        deliverable = self._reorder.insert(msg)
+    def stop(self) -> None:
+        self._stopped = True
 
-        # 3. Gap detection + backfill
-        if self._gap_detector and self._topic_id and self._reorder.gaps:
-            for (start, end) in list(self._reorder.gaps):
-                try:
-                    result = await self._gap_detector.fill(
-                        self._topic_id, start, end,
-                        before_event_id=self._reorder.last_delivered_event_id,
-                    )
-                except Exception as e:
-                    logger.warning("Gap fill error %d-%d: %s", start, end, e)
-                    continue
-
-                # Re-inject backfilled events through Dedup -> Reorder
-                for bf in result.backfilled:
-                    if not self._dedup.is_duplicate(bf.event_id):
-                        self._dedup.mark_seen(bf.event_id)
-                        deliverable.extend(self._reorder.insert(bf))
-
-                # Forward-jump past unrecoverable ranges
-                for (m_start, m_end) in result.missing_ranges:
-                    try:
-                        extra = self._reorder.set_initial_sequence(m_end + 1)
-                        deliverable.extend(extra)
-                    except ValueError:
-                        # Already advanced past this range; safe to ignore
-                        pass
-
-        # 4. Flow control (single ordered output)
-        for d_msg in deliverable:
-            await self._flow.push(d_msg)
-
-        return deliverable
-
-    async def flush(self) -> list[MessageEnvelope]:
-        """Force-flush timed-out messages."""
-        flushed = self._reorder.flush()
-        for msg in flushed:
-            if not self._dedup.is_duplicate(msg.event_id):
-                self._dedup.mark_seen(msg.event_id)
-                await self._flow.push(msg)
-        return flushed
-
-    @property
-    def stats(self) -> PipelineStats:
-        return PipelineStats(
-            deduplicator=self._dedup.stats,
-            reorder_buffer=self._reorder.stats,
-            flow_controller=self._flow.stats,
-            gap_detector=self._gap_detector.stats if self._gap_detector else None,
+    # ------------------------------------------------------------------
+    # internals
+    # ------------------------------------------------------------------
+    def _make_iter(self, *, last_event_id: str | None):
+        if self._mode == "pull":
+            return self._client.read_pull(
+                topic_id=self._src,
+                after=last_event_id,
+                limit=self._pull_limit,
+                poll_interval_seconds=self._pull_interval,
+            )
+        if self._mode == "sse":
+            return self._client.read_sse(
+                topic_id=self._src, last_event_id=last_event_id, auto_reconnect=True
+            )
+        return self._client.read_hybrid(
+            topic_id=self._src,
+            last_event_id=last_event_id,
+            poll_interval_seconds=self._pull_interval,
+            limit=self._pull_limit,
         )
+
+    async def _maybe_reorder(self, evt: Event) -> list[Event]:
+        if self._buf is None:
+            return [evt]
+        return await self._buf.push(sequence_number=evt.sequence_number, event=evt)
+
+    async def _publish(self, transformed: Any, *, source_evt: Event) -> PublishResult:
+        # transform 戻り値は dict / bytes (BaseModel は publish 側で受理)
+        # idempotency_key を source event_id にして downstream の at-most-once を helper
+        return await self._client.publish(
+            topic_id=self._sink,
+            payload=transformed,
+            idempotency_key=f"idk_pipe_{source_evt.event_id}",
+        )
+
+
+# Backward-compat 関数 (5.2 skeleton)
+async def run_pipeline() -> None:  # pragma: no cover
+    raise NotImplementedError("use Pipeline class directly")

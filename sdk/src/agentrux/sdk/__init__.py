@@ -1,164 +1,97 @@
-"""AgenTrux Python SDK — v0.3 (OAuth 2.1 + Phase 2.5 cursor + SSE hint-only).
+"""AgenTrux Python SDK (経路 B: client_credentials).
 
-Public entry point:
+SSOT: docs/04_design/sdk/sdk_design.md
 
-    from agentrux.sdk import AgenTruxClient
+CLAUDE.md §パッケージ公開ルール (絶対遵守):
+- メインリポ (agentrux/agentrux) から PyPI に publish してはならない
+- 公開は agentrux-plugins/sdk/ 経由のみ (パッケージ名 `agentrux-sdk`)
 
-    client = await AgenTruxClient.from_client_credentials(
-        "https://api.agentrux.com",
-        client_id="crd_<uuid>",
-        client_secret="aks_<...>",
-    )
-    await client.publish("top_<uuid>", "hello.world", {"msg": "hi"})
-
-    async with client.subscribe("top_<uuid>") as sub:
-        async for envelope in sub:
-            print(envelope.event_type, envelope.payload)
-
-See README.md for the full surface (DCR, device flow, AC redeem,
-checkpoint, resync_required handling).
+Public API (典型ユーザーが import するもの):
+  from agentrux.sdk import AgentRuxClient, SDKConfig
+  from agentrux.sdk.errors import (
+      AgenTruxError, AuthenticationError, PermissionDeniedError,
+      RateLimitError, PayloadTooLargeError, ...,
+  )
 """
-from agentrux.sdk.auth_models import (
-    ActivationCodeRedemption,
-    AuthorizationServerMetadata,
-    DCRRegistration,
-    DeviceAuthorization,
-    OAuthTokenResponse,
-    PayloadDownload,
-    PayloadUploadTicket,
-)
-from agentrux.sdk.checkpoint import (
-    CheckpointStats,
-    CheckpointStore,
-    FileCheckpointStore,
-)
-from agentrux.sdk.client import (
-    AgenTruxAPIClient,
-    OAuthRefreshTokenRefresher,
-    TokenBundle,
-    TokenManager,
-    TokenRefresher,
-)
-from agentrux.sdk.deduplicator import Deduplicator
-from agentrux.sdk.envelope import (
-    ListEventsPage,
-    MessageEnvelope,
-    PageCursor,
-    PublishResult,
-    TopicCursorState,
+
+from __future__ import annotations
+
+from agentrux.sdk.composer import ComposerGroup, iter_composer_groups
+from agentrux.sdk.config import SDKConfig
+from agentrux.sdk.device_code_setup import (
+    DeviceCodeSetupPending,
+    DeviceCodeSetupResult,
+    setup_via_device_code,
 )
 from agentrux.sdk.errors import (
-    APIError,
-    AccessDeniedError,
-    AuthorizationPendingError,
-    CheckpointLockedError,
-    CheckpointOrderError,
+    AgenTruxError,
+    AuthenticationError,
+    ConfigError,
     ConflictError,
-    ConnectionBannedError,
-    ExpiredTokenError,
-    ForbiddenError,
-    GapUnrecoverableError,
+    CredentialRotatedError,
+    GapDetectedError,
     IdempotencyConflictError,
-    InternalServerError,
-    InvalidClientError,
-    InvalidGrantError,
-    InvalidRequestError,
-    NotFoundError,
-    OAuthError,
+    ObjectStorageError,
     PayloadTooLargeError,
-    RateLimitedError,
-    ResyncRequiredError,
-    SDKError,
-    ServiceUnavailableError,
-    SlowDownError,
-    SuspendedError,
-    TTLExpiredError,
-    UnauthorizedError,
-    UnsupportedGrantTypeError,
+    PermissionDeniedError,
+    RateLimitError,
+    ResourceNotFoundError,
+    ServerError,
+    TemporaryError,
+    ValidationError,
 )
-from agentrux.sdk.facade import AgenTruxClient, Subscription, connect
-from agentrux.sdk.flow_controller import FlowController
-from agentrux.sdk.gap_detector import FillResult, GapDetector, GapState
-from agentrux.sdk.hybrid_consumer import HybridConsumer
-from agentrux.sdk.pipeline import MessagePipeline
-from agentrux.sdk.pull_client import PullClient
-from agentrux.sdk.reconnect import ExponentialBackoff
-from agentrux.sdk.reorder_buffer import ReorderBuffer
-from agentrux.sdk.sse_client import HintFrame, ReadyFrame, ResyncFrame, SSEClient
-from agentrux.sdk.stats import SDKStats
-
+from agentrux.sdk.facade import AgentRuxClient
+from agentrux.sdk.topology_install import (
+    InstallAbortedError,
+    InstallAuthError,
+    InstallDeniedError,
+    InstallError,
+    InstallPendingInfo,
+    InstallResult,
+    InstallResultGrant,
+    InstallTimeoutError,
+    TopologyDeclaration,
+    TopologyGrantSpec,
+    TopologyTopicSpec,
+    install_topology,
+)
 
 __all__ = [
-    # Top-level
-    "AgenTruxClient",
-    "Subscription",
-    "connect",
-    # Auth dataclasses
-    "OAuthTokenResponse",
-    "DCRRegistration",
-    "DeviceAuthorization",
-    "ActivationCodeRedemption",
-    "AuthorizationServerMetadata",
-    "PayloadUploadTicket",
-    "PayloadDownload",
-    # Event dataclasses
-    "MessageEnvelope",
-    "PublishResult",
-    "ListEventsPage",
-    "PageCursor",
-    "TopicCursorState",
-    # Low-level
-    "AgenTruxAPIClient",
-    "TokenManager",
-    "TokenBundle",
-    "TokenRefresher",
-    "OAuthRefreshTokenRefresher",
-    # Consumers
-    "PullClient",
-    "SSEClient",
-    "HybridConsumer",
-    "HintFrame",
-    "ReadyFrame",
-    "ResyncFrame",
-    # Pipeline primitives
-    "MessagePipeline",
-    "Deduplicator",
-    "ReorderBuffer",
-    "FlowController",
-    "GapDetector",
-    "GapState",
-    "FillResult",
-    "ExponentialBackoff",
-    "CheckpointStore",
-    "FileCheckpointStore",
-    "CheckpointStats",
-    "SDKStats",
-    # Errors
-    "SDKError",
-    "APIError",
-    "InvalidRequestError",
-    "UnauthorizedError",
-    "ForbiddenError",
-    "SuspendedError",
-    "NotFoundError",
-    "TTLExpiredError",
+    "AgentRuxClient",
+    "SDKConfig",
+    "AgenTruxError",
+    "ConfigError",
+    "AuthenticationError",
+    "CredentialRotatedError",
+    "PermissionDeniedError",
+    "ResourceNotFoundError",
     "ConflictError",
     "IdempotencyConflictError",
-    "RateLimitedError",
     "PayloadTooLargeError",
-    "ServiceUnavailableError",
-    "InternalServerError",
-    "OAuthError",
-    "InvalidClientError",
-    "InvalidGrantError",
-    "UnsupportedGrantTypeError",
-    "AuthorizationPendingError",
-    "SlowDownError",
-    "AccessDeniedError",
-    "ExpiredTokenError",
-    "ResyncRequiredError",
-    "ConnectionBannedError",
-    "GapUnrecoverableError",
-    "CheckpointLockedError",
-    "CheckpointOrderError",
+    "RateLimitError",
+    "ValidationError",
+    "TemporaryError",
+    "ServerError",
+    "ObjectStorageError",
+    "GapDetectedError",
+    # Topology Request Flow v1
+    "install_topology",
+    "TopologyDeclaration",
+    "TopologyTopicSpec",
+    "TopologyGrantSpec",
+    "InstallPendingInfo",
+    "InstallResult",
+    "InstallResultGrant",
+    "InstallError",
+    "InstallDeniedError",
+    "InstallTimeoutError",
+    "InstallAuthError",
+    "InstallAbortedError",
+    # Plain Device Code Setup (RFC 8628、 RAR なし、 device_code_setup_v1.md)
+    "setup_via_device_code",
+    "DeviceCodeSetupPending",
+    "DeviceCodeSetupResult",
+    # Composer Event Group reader (Phase BT.1.d 部分実装、 composer_event_format.md §3-3)
+    "ComposerGroup",
+    "iter_composer_groups",
 ]

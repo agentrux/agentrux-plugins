@@ -1,198 +1,61 @@
-"""ReorderBuffer - Sequence-based message reordering with timeout."""
+"""Reorder buffer for pipeline (順序ずれの一時保留).
+
+SSOT: docs/04_design/sdk/sdk_design.md §6
+
+invariant:
+- sequence_number 昇順で出力
+- buffer 内にある event は max_lag 個を超えない
+- push() は「今出力できる連続 prefix」を返す
+"""
+
 from __future__ import annotations
 
-import time
-from sortedcontainers import SortedDict
-
-from agentrux.sdk.envelope import MessageEnvelope
-from agentrux.sdk.stats import ReorderBufferStats
+from typing import Any
 
 
 class ReorderBuffer:
-    """Reorders messages by sequence number within a sliding window.
+    """bounded buffer。 sequence_number で sort + 連続 prefix の flush.
 
-    Messages are buffered and delivered in order. If a gap exists
-    and max_delay_ms is exceeded, messages are force-flushed.
+    呼び出し例:
+      buf = ReorderBuffer(max_lag=100)
+      out = await buf.push(sequence_number=5, event=evt)  # [evt(3), evt(4), evt(5)] (依存先 prefix が来た時)
     """
 
-    def __init__(
-        self,
-        window_size: int = 64,
-        max_delay_ms: int = 5000,
-    ):
-        if window_size <= 0:
-            raise ValueError("window_size must be positive")
-        self._buffer: SortedDict[int, MessageEnvelope] = SortedDict()
-        self._arrival_times: dict[int, float] = {}
-        self._next_expected_seq: int = 0
-        self._initialized: bool = False
-        self._window_size = window_size
-        self._max_delay_ms = max_delay_ms
-        self._stats = ReorderBufferStats()
-        # event_id of the most recently *delivered* message; used by
-        # GapDetector to query `list_events(after=...)` for the seqs
-        # immediately following a gap.
-        self._last_delivered_event_id: str | None = None
+    def __init__(self, *, max_lag: int = 100) -> None:
+        self.max_lag = max_lag
+        self._buffer: dict[int, Any] = {}
+        self._next_expected: int | None = None  # 次に出力すべき sequence_number
 
-    def insert(self, msg: MessageEnvelope) -> list[MessageEnvelope]:
-        """Insert message and return any deliverable messages in order.
+    async def push(self, *, sequence_number: int, event: Any) -> list[Any]:
+        """event を buffer に追加し、 出力可能な連続 prefix を返す.
 
-        Returns ordered list of messages that can now be delivered.
-
-        Note: The buffer starts ordering from the first message's sequence
-        unless set_initial_sequence() is called. Messages arriving with
-        a sequence lower than expected are dropped as "already delivered".
-        For random-order use cases, call set_initial_sequence(min_seq) first.
+        - 初回 push: _next_expected を sequence_number に初期化、 そのまま 1 件出力
+        - 重複 (既に出力済 / buffer 済): 無視して []
+        - 期待外 future seq: buffer に積む、 max_lag 超過は buffer の最古を強制 flush (gap 容認)
         """
-        seq = msg.sequence_number
-        self._stats.messages_inserted += 1
+        if self._next_expected is None:
+            self._next_expected = sequence_number
 
-        # Initialize next_expected on first message
-        if not self._initialized:
-            self._next_expected_seq = seq
-            self._initialized = True
-
-        # Ignore old messages (already delivered)
-        if seq < self._next_expected_seq:
+        if sequence_number < self._next_expected:
+            # 古い event (重複) → 無視
+            return []
+        if sequence_number in self._buffer:
+            # 重複 → 無視
             return []
 
-        # Already in buffer (duplicate seq)
-        if seq in self._buffer:
-            return []
+        self._buffer[sequence_number] = event
 
-        self._buffer[seq] = msg
-        self._arrival_times[seq] = time.monotonic()
+        # max_lag 超過: 待っている prefix を諦め、 buffer 内最小 seq を新しい next_expected に
+        if len(self._buffer) > self.max_lag:
+            self._next_expected = min(self._buffer.keys())
 
-        if seq != self._next_expected_seq:
-            self._stats.reorder_delays += 1
-
-        return self._drain_consecutive()
-
-    def flush(self) -> list[MessageEnvelope]:
-        """Force-flush messages that have exceeded max_delay_ms.
-
-        Messages waiting too long are delivered even with gaps.
-        """
-        if not self._buffer:
-            return []
-
-        now = time.monotonic()
-        result: list[MessageEnvelope] = []
-
-        # Check oldest message in buffer
-        while self._buffer:
-            oldest_seq = self._buffer.keys()[0]
-            arrival = self._arrival_times.get(oldest_seq, now)
-            elapsed_ms = (now - arrival) * 1000
-
-            if elapsed_ms < self._max_delay_ms:
-                break
-
-            # Force deliver: skip gap
-            self._next_expected_seq = oldest_seq
-            delivered = self._drain_consecutive()
-            result.extend(delivered)
-            self._stats.forced_flushes += 1
-
-            if not delivered:
-                # Single stranded message
-                msg = self._buffer.pop(oldest_seq)
-                self._arrival_times.pop(oldest_seq, None)
-                result.append(msg)
-                self._next_expected_seq = oldest_seq + 1
-                self._stats.messages_delivered += 1
-                self._stats.forced_flushes += 1
-
-        # Window overflow: force flush oldest
-        while len(self._buffer) > self._window_size:
-            oldest_seq = self._buffer.keys()[0]
-            self._next_expected_seq = oldest_seq
-            delivered = self._drain_consecutive()
-            result.extend(delivered)
-            if not delivered:
-                msg = self._buffer.pop(oldest_seq)
-                self._arrival_times.pop(oldest_seq, None)
-                result.append(msg)
-                self._next_expected_seq = oldest_seq + 1
-                self._stats.messages_delivered += 1
-
-        return result
-
-    def set_initial_sequence(self, seq: int) -> list[MessageEnvelope]:
-        """Set the expected sequence and return any messages now deliverable.
-
-        Two use cases:
-        1. Initialization (subscribe start, checkpoint resume) — buffer is empty,
-           returns []
-        2. Forward jump (after GapDetector reports UNRECOVERABLE) —
-           advances next_expected_seq, drops buffer entries with seq < new next,
-           then drains consecutive messages from the new position.
-
-        Backward moves are forbidden (raises ValueError) to surface misuse.
-        On the first call ever (uninitialized), any seq is accepted.
-        """
-        if self._initialized and seq < self._next_expected_seq:
-            raise ValueError(
-                f"set_initial_sequence cannot move backward: "
-                f"current={self._next_expected_seq}, requested={seq}"
-            )
-
-        self._next_expected_seq = seq
-        self._initialized = True
-
-        # Drop entries that are now older than next_expected
-        stale_keys = [k for k in self._buffer.keys() if k < seq]
-        for k in stale_keys:
-            self._buffer.pop(k, None)
-            self._arrival_times.pop(k, None)
-
-        return self._drain_consecutive()
-
-    def _drain_consecutive(self) -> list[MessageEnvelope]:
-        """Remove and return consecutive messages starting from next_expected_seq."""
-        result: list[MessageEnvelope] = []
-        while self._next_expected_seq in self._buffer:
-            msg = self._buffer.pop(self._next_expected_seq)
-            self._arrival_times.pop(self._next_expected_seq, None)
-            result.append(msg)
-            self._next_expected_seq += 1
-            self._stats.messages_delivered += 1
-        if result:
-            self._last_delivered_event_id = result[-1].event_id
-        return result
-
-    @property
-    def last_delivered_event_id(self) -> str | None:
-        """event_id of the most recently delivered message, or None.
-
-        GapDetector uses this as the `after=` cursor when probing the
-        list_events endpoint for events in a gap range.
-        """
-        return self._last_delivered_event_id
+        # 連続 prefix を flush
+        flushed: list[Any] = []
+        while self._next_expected in self._buffer:
+            flushed.append(self._buffer.pop(self._next_expected))
+            self._next_expected += 1
+        return flushed
 
     @property
     def pending_count(self) -> int:
         return len(self._buffer)
-
-    @property
-    def gaps(self) -> list[tuple[int, int]]:
-        """Return detected gaps as [(start, end), ...]."""
-        if not self._buffer or not self._initialized:
-            return []
-
-        result: list[tuple[int, int]] = []
-        expected = self._next_expected_seq
-        for seq in self._buffer.keys():
-            if seq > expected:
-                result.append((expected, seq - 1))
-            expected = seq + 1
-        return result
-
-    @property
-    def next_expected_sequence(self) -> int:
-        return self._next_expected_seq
-
-    @property
-    def stats(self) -> ReorderBufferStats:
-        self._stats.current_pending = len(self._buffer)
-        return self._stats
