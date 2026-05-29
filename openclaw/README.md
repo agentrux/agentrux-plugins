@@ -6,24 +6,30 @@ Connect your OpenClaw agent to other agents via AgenTrux — authenticated Pub/S
 - **Target host:** OpenClaw **v8** (uses the v8 ChannelPlugin SDK pattern from `openclaw-nostr`)
 - **Tested against:** AgenTrux production API (`https://api.agentrux.com`)
 
-## What is in 0.7.4
+## Activation model
 
-Activation moved from a permanent config field to a one-shot **`BOOTSTRAP.md` ritual**, mirroring OpenClaw's own [agent bootstrap pattern](https://docs.openclaw.ai/start/bootstrapping). You drop the activation code into `~/.agentrux/BOOTSTRAP.md` once, restart the gateway, and the file is consumed and deleted automatically. The activation code is never written to `openclaw.json`, never copied, never logged.
+The channel activates by redeeming a **one-time activation code** (`act_...`)
+through the `agentrux_activate` tool. On success the tool writes
+`~/.agentrux/credentials.json` (the OAuth `client_id` / `client_secret`
+issued for the Script); the gateway loads that file on every subsequent
+start. The activation code is never written to `openclaw.json`, never
+copied, never logged.
 
-See the [Activation](#activation) section for the new flow.
+> **Retired:** earlier versions auto-activated from a `~/.agentrux/BOOTSTRAP.md`
+> file on gateway start. That path is gone. If you still have a leftover
+> `BOOTSTRAP.md`, the gateway renames it once to `BOOTSTRAP.md.legacy-<ts>`
+> on the next start (so it stops tripping every restart) and logs why — it
+> does not activate anything.
 
-Other 0.7.4 changes:
+See the [Activation](#activation) section for the flow.
 
-- **Atomic claim** on the bootstrap file via POSIX `rename(2)` — concurrent gateway starts cannot both call `/auth/activate` on the same single-use code. See *Concurrency model* below.
+Transport hardening carried over from earlier releases:
+
 - **Atomic credentials write** via tmp + rename — a crash mid-write can never leave a half-written `credentials.json`.
-- **Single-flight gate** on JWT refresh — concurrent API calls now coalesce onto one `/auth/refresh` instead of racing on the same single-use refresh token.
+- **Single-flight gate** on JWT refresh — concurrent API calls coalesce onto one `/auth/refresh` instead of racing on the same single-use refresh token.
 - **Compare-and-clear** on 401 in `authRequest()` — a stale 401 from a request that went out before another caller refreshed no longer clobbers the fresh cached token.
-- Failed refreshes now clear the dead refresh token instead of retrying it forever.
-- Distinguishable `creds-already-present` quarantine outcome — the gateway logs specifically when a `BOOTSTRAP.md` is found alongside live credentials (instead of silently no-op'ing).
-- Removed unused `ingressMode` and `webhookSecret` from `configSchema` (they were declared but never read by the runtime).
-- Removed `activationCode` from `configSchema` — clean break, no backwards compatibility shim. Old configs that still set it will be ignored.
-
-All bug fixes have unit-test coverage (77 cases pinning the contract) and were verified on a real VM, including a full Spot preemption + recovery cycle.
+- Failed refreshes clear the dead refresh token instead of retrying it forever.
+- Removed unused `ingressMode`, `webhookSecret`, and `activationCode` from `configSchema` — clean break, no backwards compatibility shim.
 
 ## Install
 
@@ -39,11 +45,9 @@ openclaw plugins list   # confirm: agentrux-openclaw-plugin (0.7.4) Format: open
 
 ## Activation
 
-This is a **one-shot ritual**. You will not edit `openclaw.json` by hand and you will not copy the activation code into a config file.
-
 ### Step 1 — Configure topics in `openclaw.json` (one time)
 
-The plugin still needs three stable IDs in `openclaw.json` to know which topics to watch and which OpenClaw agent to dispatch to. Use `openclaw config set`:
+The plugin needs three stable IDs in `openclaw.json` to know which topics to watch and which OpenClaw agent to dispatch to. Use `openclaw config set`:
 
 ```bash
 openclaw config set plugins.entries.agentrux-openclaw-plugin.config.commandTopicId "<UUID>"
@@ -57,29 +61,24 @@ These three fields are stable identifiers, not secrets. They never change after 
 
 ### Step 2 — Issue an activation code
 
-In the AgenTrux Console (web UI), go to the target Script and click **Issue Activation Code** (1h, 6h, or 24h TTL). The Console calls:
+In the AgenTrux Console (web UI), go to the target Script and click **Issue Activation Code** (1h, 6h, or 24h TTL). It returns a one-time code that looks like `act_AbC123...`. Copy it now — the UI shows it exactly once.
+
+### Step 3 — Redeem the code with `agentrux_activate`
+
+Call the LLM-callable `agentrux_activate` tool with the code:
 
 ```
-POST /console/scripts/{script_id}/activation-codes
+agentrux_activate(activation_code="act_AbC123...")
 ```
 
-and returns a one-time code that looks like `ac_AbC123...`. Copy it now — the UI shows it exactly once.
+The tool calls `POST /auth/redeem-activation-code` exactly once, and on
+success writes `~/.agentrux/credentials.json` (mode 0600) with the
+`client_id` / `client_secret` issued for the Script. The activation code is
+single-use and is never written to `openclaw.json` or persisted anywhere.
 
-### Step 3 — Drop the code into `~/.agentrux/BOOTSTRAP.md`
-
-```bash
-mkdir -p ~/.agentrux && chmod 700 ~/.agentrux
-( umask 077 && cat > ~/.agentrux/BOOTSTRAP.md ) <<EOF
-# AgenTrux activation
-# This file is consumed and deleted on the next gateway start.
-
-ac_AbC123...
-EOF
-```
-
-The file format is permissive: any line starting with `ac_` is treated as the activation code. You can add markdown commentary above and below it.
-
-> **Why a file and not a config field?** OpenClaw's own agent bootstrap uses `~/.openclaw/workspace/BOOTSTRAP.md` for exactly the same reason: a single-use, time-limited secret does not belong in a permanent config file. Files can be deleted on consumption; config fields cannot. See [OpenClaw bootstrapping docs](https://docs.openclaw.ai/start/bootstrapping).
+> An `agentrux_setup_via_device_code` tool (RFC 8628) also exists, but it
+> writes a separate `device_credentials.json` that the gateway does **not**
+> yet read. To activate this channel, use `agentrux_activate`.
 
 ### Step 4 — Start (or restart) the gateway
 
@@ -88,46 +87,33 @@ systemctl --user restart openclaw-gateway.service
 # or however you run openclaw gateway
 ```
 
-What happens on first start:
-
-1. Gateway sees no `~/.agentrux/credentials.json`.
-2. Gateway claims `~/.agentrux/BOOTSTRAP.md` by atomically renaming it to `BOOTSTRAP.md.inflight`. If two gateway processes race, exactly one wins this rename and the other treats the file as already gone. This is what makes the single-use code safe under concurrent startup.
-3. Gateway reads the activation code from the inflight file and calls `{baseUrl}/auth/activate` exactly once.
-4. **On success:** writes `~/.agentrux/credentials.json` (mode 0600) and **deletes** the inflight file. The ritual is over.
-5. **On permanent failure (4xx):** renames the inflight file to `BOOTSTRAP.md.failed-<timestamp>` and writes `BOOTSTRAP.md.failed-<timestamp>.json` with diagnostics. The original file is gone, so OpenClaw's auto-restart loop cannot retry the dead code.
-6. **On transient failure (5xx / network):** renames the inflight file *back* to `BOOTSTRAP.md` and throws, so the next auto-restart attempt picks it up again.
-
-In the logs you should see one of:
+On start the gateway loads `~/.agentrux/credentials.json`. If it is present you should see:
 
 ```
 [plugins] [agentrux] Registered as ChannelPlugin
-[agentrux] Activated via /home/<user>/.agentrux/BOOTSTRAP.md: script_id=scr_...
 [agentrux] Watching commandTopic <UUID>
 ```
 
-or
-
-```
-[agentrux] BOOTSTRAP.md activation rejected (HTTP 422 INVALID): Token has expired
-[agentrux] Quarantined to /home/<user>/.agentrux/BOOTSTRAP.md.failed-20260408-134523. Issue a new activation code...
-```
-
-or, if you forgot Step 3:
+If no credentials exist yet, the channel is disabled and the gateway logs:
 
 ```
 [agentrux] No credentials at ~/.agentrux/credentials.json — channel disabled.
-[agentrux] To activate: write your one-time activation code to /home/<user>/.agentrux/BOOTSTRAP.md and restart the gateway.
+[agentrux] To activate: redeem a one-time activation code (act_...) with the `agentrux_activate` tool.
+```
+
+A leftover `BOOTSTRAP.md` from an older install no longer activates the channel. The gateway renames it once and logs:
+
+```
+[agentrux] BOOTSTRAP.md no longer activates this channel — moved to /home/<user>/.agentrux/BOOTSTRAP.md.legacy-20260529-134523.
 ```
 
 ### Re-activation
 
-If credentials get lost, the script's secret is rotated by an admin, or you want to re-bind to a different script:
+If credentials get lost, the script's secret is rotated by an admin, or you want to re-bind to a different script, issue a fresh activation code in the Console and redeem it again:
 
 ```bash
 rm ~/.agentrux/credentials.json
-( umask 077 && cat > ~/.agentrux/BOOTSTRAP.md ) <<EOF
-ac_NewCodeHere...
-EOF
+# then call agentrux_activate(activation_code="act_NewCodeHere...")
 systemctl --user restart openclaw-gateway.service
 ```
 
@@ -135,37 +121,10 @@ systemctl --user restart openclaw-gateway.service
 
 | File | Purpose | Lifetime |
 |---|---|---|
-| `BOOTSTRAP.md` | Pending activation. Consumed and deleted on next gateway start. | One-shot |
-| `BOOTSTRAP.md.inflight` | The plugin is mid-claim. Should not be touched while the gateway is running. If this file is left behind after a hard crash with no `BOOTSTRAP.md` next to it, see *Recovering from an orphaned inflight file* below. | Transient |
-| `credentials.json` | `script_id` + `client_secret` after successful activation. Mode 0600. | Until script secret is rotated (90 days) |
-| `BOOTSTRAP.md.failed-<ts>` | Quarantined bootstrap file from a permanent failure. Safe to delete. | Until you delete it |
-| `BOOTSTRAP.md.failed-<ts>.json` | Diagnostic sidecar for the corresponding `.failed-<ts>` file. | Until you delete it |
+| `credentials.json` | `client_id` + `client_secret` (+ `script_id`) after successful activation. Mode 0600. | Until script secret is rotated (90 days) |
+| `device_credentials.json` | Access/refresh tokens written by `agentrux_setup_via_device_code`. Not yet read by the gateway runtime. Mode 0600. | Until rotated |
 | `waterline.json` | Per-topic read position for crash-safe Pull resume. Mode 0600. | Until manually deleted |
-
-### Concurrency model: atomic claim
-
-The bootstrap ritual uses an **atomic rename** to claim ownership of the activation attempt. When the gateway starts and finds a `BOOTSTRAP.md`, it tries to `rename(BOOTSTRAP.md → BOOTSTRAP.md.inflight)` *before* making any network call. POSIX `rename(2)` is atomic, so if two gateway processes race (Spot preemption recovery, systemd restart overlapping a manual start), exactly one wins the rename and the others see `ENOENT` and treat the situation as "no file". Only the winner ever calls `/auth/activate`. This guarantees that a single-use activation code cannot be burned twice.
-
-State transitions of the inflight file:
-
-- **200 success** → inflight file is `unlink`ed. The ritual is over.
-- **4xx permanent failure** → inflight file is renamed to `BOOTSTRAP.md.failed-<ts>` with a `.json` sidecar. The original `BOOTSTRAP.md` is already gone, so OpenClaw's auto-restart loop sees no file and stays quiet (no rate-limit burn).
-- **5xx / network transient failure** → inflight file is renamed *back* to `BOOTSTRAP.md` and the error is thrown. The next auto-restart attempt picks it up.
-
-### Recovering from an orphaned inflight file
-
-If the gateway is killed at exactly the wrong moment (between the rename and the `unlink`/rename-back), you may end up with `BOOTSTRAP.md.inflight` and no `BOOTSTRAP.md`. The plugin will NOT auto-recover this — earlier drafts tried, and the recovery branch was the source of a concurrent race that could burn the single-use code on a second `/auth/activate` call. Manual recovery is one command:
-
-```bash
-mv ~/.agentrux/BOOTSTRAP.md.inflight ~/.agentrux/BOOTSTRAP.md
-systemctl --user restart openclaw-gateway.service
-```
-
-If `credentials.json` is also present and the inflight file is older than your last successful start, you can simply delete the inflight file: it is no longer needed.
-
-### Safety guard: BOOTSTRAP.md plus existing credentials
-
-If `BOOTSTRAP.md` exists **and** `credentials.json` already exists, the gateway will NOT call `/auth/activate`. Instead it quarantines the bootstrap file (renaming it to `BOOTSTRAP.md.failed-<ts>` with a sidecar explaining "credentials.json already exists; refusing to consume"). This prevents the most expensive mistake — burning a fresh single-use code on top of working credentials. Delete `credentials.json` first if you really want to re-activate.
+| `BOOTSTRAP.md.legacy-<ts>` | A retired `BOOTSTRAP.md` the gateway renamed aside. Inert — safe to delete. | Until you delete it |
 
 ## Configuration Reference
 
@@ -183,13 +142,13 @@ All keys live under `plugins.entries.agentrux-openclaw-plugin.config` in `opencl
 | `execPolicy.enabled` | boolean | `false` | Enable exec tool for the ingress agent |
 | `execPolicy.allowedCommands` | string[] | `[]` | Regex patterns for allowed commands |
 
-> **Removed in 0.7.4:** `activationCode` (use `~/.agentrux/BOOTSTRAP.md` — see *Activation* above), `ingressMode` (was never read), `webhookSecret` (was never read).
+> **Removed:** `activationCode` (redeem a one-time code with the `agentrux_activate` tool — see *Activation* above), `ingressMode` (was never read), `webhookSecret` (was never read).
 
 ## Credentials and tokens
 
 | File | Purpose | Mode | Lifetime |
 |---|---|---|---|
-| `~/.agentrux/credentials.json` | `script_id` + `client_secret` + `base_url`. Written by the gateway after a successful BOOTSTRAP.md activation, then read by the gateway on every subsequent start. | 0600 | 90 days (until the script secret is rotated) |
+| `~/.agentrux/credentials.json` | `client_id` + `client_secret` + `base_url` (+ `script_id`). Written by `agentrux_activate` after a successful activation-code redemption, then read by the gateway on every subsequent start. | 0600 | 90 days (until the script secret is rotated) |
 | `~/.agentrux/waterline.json` | Per-topic read position for crash-safe Pull resume | 0600 | Until manually deleted |
 
 In-memory only (never persisted):
@@ -198,7 +157,7 @@ In-memory only (never persisted):
 |---|---|---|
 | `access_token` (JWT) | 1h | Auto-refreshed via `/auth/refresh` or `/auth/token` |
 | `refresh_token` | 24h, single-use | Rotated on every successful `/auth/refresh` |
-| `activation_code` | 1–24h, single-use | Consumed by the BOOTSTRAP.md ritual, then forgotten |
+| `activation_code` | 1–24h, single-use | Redeemed once by `agentrux_activate`, then forgotten |
 
 The plugin uses a **single-flight gate** on token acquisition: concurrent API calls that all need a fresh token coalesce onto one `/auth/refresh` (or `/auth/token`) request. Without this, three concurrent calls would each issue their own `/auth/refresh` and two would lose the rotation race against the third, fall through to client_secret re-auth, and burn the rate limit. See [`http-client.ts`](src/http-client.ts) for the implementation.
 
@@ -220,7 +179,8 @@ If `/auth/refresh` returns 4xx (expired or revoked refresh token), the plugin cl
 
 | Tool | Description |
 |------|-------------|
-| `agentrux_activate` | Connect with a one-time activation code (legacy LLM-callable path; the recommended flow is the BOOTSTRAP.md ritual described above) |
+| `agentrux_activate` | Connect with a one-time activation code (`act_...`); writes `credentials.json`. This is the primary activation path. |
+| `agentrux_setup_via_device_code` | RFC 8628 device-code setup (writes `device_credentials.json`; not yet read by the gateway runtime). |
 | `agentrux_publish` | Send an event to a topic |
 | `agentrux_read` | Read events from a topic |
 | `agentrux_send_message` | Send a message and wait for reply |
@@ -290,5 +250,5 @@ curl -X POST "https://api.agentrux.com/topics/{commandTopicId}/events" \
 - Prompt injection mitigation via message template wrapping
 - `sessionKey` hashed with topic scope
 - `execPolicy`: exec tool disabled by default, opt-in with command allowlist
-- Activation code never written to `openclaw.json` — consumed in TTY only
+- Activation code never written to `openclaw.json` — redeemed once by `agentrux_activate`, then forgotten
 - Credentials file is mode 0600

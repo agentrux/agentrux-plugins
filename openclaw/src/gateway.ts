@@ -18,7 +18,7 @@ import {
   WATERLINE_PATH,
 } from "./credentials";
 import { httpJson, pullEvents, ensureToken, invalidateToken, authRequest, ensureTopPrefix, PLUGIN_USER_AGENT, isTtlExpiredCursor, extractOldestAvailable } from "./http-client";
-import { consumeBootstrapFile, getBootstrapPath, TransientActivationError } from "./activation-core";
+import { quarantineLegacyBootstrap } from "./activation-core";
 import { wrapMessage } from "./sanitize";
 import { getPluginRuntime } from "./runtime";
 import {
@@ -239,91 +239,31 @@ export const agentruxGateway = {
     } = channelRT.reply;
     const { recordInboundSession, resolveStorePath } = channelRT.session;
 
-    // 1. Credentials: load existing, OR consume a one-shot BOOTSTRAP.md.
+    // 1. Credentials: load existing, else the channel stays disabled.
     //
-    //    Activation flow (mirrors OpenClaw's own ~/.openclaw/workspace/
-    //    BOOTSTRAP.md ritual — see https://docs.openclaw.ai/start/bootstrapping):
-    //
-    //      a. If ~/.agentrux/credentials.json exists, load it. Done.
-    //      b. Else if ~/.agentrux/BOOTSTRAP.md exists, read its activation
-    //         code, exchange it for credentials by calling
-    //         /auth/redeem-activation-code exactly once, write
-    //         credentials.json atomically, and DELETE the bootstrap file so
-    //         the ritual never runs twice.
-    //      c. Else (no creds, no bootstrap file): channel disabled.
-    //
-    //    Why this design (vs. an activationCode field in openclaw.json):
-    //
-    //    - openclaw.json is a permanent config file, but the activation
-    //      code is single-use and time-limited. Holding it in config means
-    //      it gets quoted/copied/cached and survives long after it has been
-    //      consumed.
-    //    - OpenClaw's auto-restart loop (10 attempts, exponential backoff)
-    //      treats any "channel exited" event as cause for retry. A 4xx from
-    //      /auth/redeem-activation-code is permanent, but a config-driven activation has
-    //      no way to mark "this code is dead" — it would burn the rate
-    //      limit forever. The BOOTSTRAP.md pattern handles this by renaming
-    //      the file to BOOTSTRAP.md.failed-<ts> on a 4xx, so the next loop
-    //      iteration sees no file and goes quiet.
-    //    - For 5xx / network failures the file is left untouched and we
-    //      THROW so the auto-restart loop kicks in and retries — that is
-    //      the correct behavior for transient errors.
-    //
-    //    The contract is pinned in src/__tests__/bootstrap.test.ts.
+    //    Activation no longer happens here. The gateway only loads
+    //    ~/.agentrux/credentials.json; that file is written by the
+    //    `agentrux_activate` tool when it redeems a one-time activation
+    //    code (act_...). The old auto-activation from BOOTSTRAP.md is gone,
+    //    so a leftover BOOTSTRAP.md from an older install no longer does
+    //    anything — we rename it aside once so it stops tripping every
+    //    restart, then disable the channel with a pointer to the tool.
     invalidateToken();
-    let creds = loadCredentials();
+    const creds = loadCredentials();
     if (!creds) {
-      const baseUrl = account.baseUrl || "https://api.agentrux.com";
-      let bootstrap;
-      try {
-        bootstrap = await consumeBootstrapFile({ baseUrl });
-      } catch (err) {
-        if (err instanceof TransientActivationError) {
-          // Re-throw so OpenClaw treats this as a crash and the auto-restart
-          // loop retries. The BOOTSTRAP.md file is still in place so the
-          // next attempt can succeed.
-          log?.error?.(`[agentrux] ${err.message}`);
-          throw err;
-        }
-        throw err;
+      const legacy = quarantineLegacyBootstrap();
+      if (legacy.kind === "quarantined") {
+        log?.warn?.(
+          `[agentrux] BOOTSTRAP.md no longer activates this channel — moved to ${legacy.movedTo}.`,
+        );
       }
-
-      if (bootstrap.kind === "ok") {
-        log?.info?.(
-          `[agentrux] Activated via ${getBootstrapPath()}: script_id=${bootstrap.credentials.script_id}`,
-        );
-        creds = bootstrap.credentials;
-      } else if (bootstrap.kind === "permanent-failure") {
-        log?.error?.(
-          `[agentrux] BOOTSTRAP.md activation rejected (HTTP ${bootstrap.httpStatus} ${bootstrap.errorCode}): ${bootstrap.errorMessage}`,
-        );
-        log?.error?.(
-          `[agentrux] Quarantined to ${bootstrap.failedFilePath}. Issue a new activation code and write it to ${getBootstrapPath()}.`,
-        );
-        return;
-      } else if (bootstrap.kind === "validation-failure") {
-        log?.error?.(
-          `[agentrux] BOOTSTRAP.md is malformed: ${bootstrap.reason}. Quarantined to ${bootstrap.failedFilePath}.`,
-        );
-        return;
-      } else if (bootstrap.kind === "creds-already-present") {
-        // This branch should be impossible because we are in the
-        // `if (!creds)` block, but keep it explicit so the type checker
-        // is happy and so a future refactor cannot lose the distinction.
-        log?.warn?.(
-          `[agentrux] BOOTSTRAP.md found alongside existing credentials.json — quarantined to ${bootstrap.failedFilePath} without calling /auth/redeem-activation-code (would burn the single-use code).`,
-        );
-        return;
-      } else {
-        // bootstrap.kind === "no-file"
-        log?.warn?.(
-          "[agentrux] No credentials at ~/.agentrux/credentials.json — channel disabled.",
-        );
-        log?.warn?.(
-          `[agentrux] To activate: write your one-time activation code to ${getBootstrapPath()} and restart the gateway.`,
-        );
-        return;
-      }
+      log?.warn?.(
+        "[agentrux] No credentials at ~/.agentrux/credentials.json — channel disabled.",
+      );
+      log?.warn?.(
+        "[agentrux] To activate: redeem a one-time activation code (act_...) with the `agentrux_activate` tool.",
+      );
+      return;
     }
 
     // 2. Waterline

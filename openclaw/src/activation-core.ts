@@ -1,40 +1,27 @@
 /**
  * Pure activation logic for the AgenTrux OpenClaw plugin.
  *
- * This module exposes two callable surfaces, both consumed by gateway.ts:
+ * This module exposes two callable surfaces:
  *
  *   1. activate({ rawActivationCode, baseUrl })
  *      Calls the /auth/redeem-activation-code endpoint exactly once with a single
  *      activation code, classifies the response (200 / 4xx / 5xx /
- *      network), and writes credentials.json atomically on success.
+ *      network), and writes credentials.json atomically on success. This is
+ *      the pure, unit-tested counterpart of the manual `agentrux_activate`
+ *      tool (index.ts currently inlines an equivalent redeem call rather
+ *      than delegating here — a known duplication, not a contract).
  *
- *   2. consumeBootstrapFile({ baseUrl })
- *      The one-shot bootstrap ritual: claim ~/.agentrux/BOOTSTRAP.md by
- *      atomically renaming it to BOOTSTRAP.md.inflight, then drive the
- *      activate() flow against the claimed file. This is what the
- *      gateway calls on startup when no credentials.json exists.
+ *   2. quarantineLegacyBootstrap()
+ *      Retire a leftover ~/.agentrux/BOOTSTRAP.md from an older install.
+ *      BOOTSTRAP.md no longer activates the channel — activation now runs
+ *      through the device-code / topology setup flow (device-code-setup.ts).
+ *      A stale BOOTSTRAP.md would otherwise sit inert and confuse the
+ *      operator, so the gateway renames it once to a timestamped sibling on
+ *      startup. No network call is made; credentials.json is never touched.
  *
- * Design history (why activation lives here and NOT inside the gateway's
- * normal request loop):
- *
- *   The previous version of this plugin held the activation_code in
- *   openclaw.json and called the activation endpoint every time the gateway
- *   started without credentials. Two real production bugs followed:
- *
- *     - OpenClaw's auto-restart loop (10 attempts, exponential backoff)
- *       treats any "channel exited" event as cause for retry. A 4xx from
- *       the activation endpoint is permanent — there is no code on earth that
- *       will make it succeed — but the runtime cannot tell the difference,
- *       so it would burn the rate limit on a dead code.
- *     - A single-use, time-limited secret in a permanent config file is
- *       a category error: it gets quoted, copied, cached, and survives
- *       long after consumption.
- *
- *   Bootstrap is the answer to both. The file's existence marks "needs
- *   activation"; the runtime consumes it once; success deletes it;
- *   permanent failure quarantines it (the auto-restart loop sees no
- *   file and stays quiet). This mirrors OpenClaw's own
- *   ~/.openclaw/workspace/BOOTSTRAP.md ritual for agent identity setup.
+ * History: an earlier version auto-activated from BOOTSTRAP.md (atomic
+ * claim → /auth/activate → quarantine on 4xx). That endpoint and ritual are
+ * gone; the only remnant we keep is the one-time cleanup above.
  *
  * Why path constants come from ./credentials: see the comment at the top
  * of credentials.ts. Centralizing them there keeps this file clear of
@@ -52,7 +39,6 @@ import {
 } from "./credentials";
 
 const BOOTSTRAP_PATH = path.join(AGENTRUX_DIR, "BOOTSTRAP.md");
-const INFLIGHT_PATH = path.join(AGENTRUX_DIR, "BOOTSTRAP.md.inflight");
 
 // Activation code shape: "act_" prefix + base64url payload.
 // Server-side codes from IssueActivationCodeCommand are 43 chars after the
@@ -234,312 +220,62 @@ export function getBootstrapPath(): string {
 }
 
 // ---------------------------------------------------------------------------
-// BOOTSTRAP.md one-shot ritual
+// Legacy BOOTSTRAP.md retirement
 // ---------------------------------------------------------------------------
 //
-// This mirrors OpenClaw's own ~/.openclaw/workspace/BOOTSTRAP.md pattern:
-// the file's existence marks "needs initialization", the runtime consumes
-// it once, and on success the file is deleted so the ritual can never be
-// re-run by accident. On permanent failure the file is moved aside (never
-// silently retried). On transient failure the file is left in place so a
-// retry can succeed.
-//
-// The contract is pinned by src/__tests__/bootstrap.test.ts.
+// BOOTSTRAP.md activation is gone (the /auth/activate endpoint and its
+// one-shot ritual were removed; activation now runs through the
+// device-code / topology setup flow). The only thing we still owe existing
+// users is a clean exit for a leftover BOOTSTRAP.md: rename it once to a
+// timestamped sibling so the gateway stops tripping over it on every
+// restart, and let the caller log why. No network call, no credentials.
 
-export type BootstrapOutcome =
-  | { kind: "no-file" }
-  | { kind: "ok"; credentials: Credentials; grants: ActivationGrant[] }
-  | {
-      kind: "permanent-failure";
-      httpStatus: number;
-      errorCode: string;
-      errorMessage: string;
-      failedFilePath: string;
-    }
-  | {
-      kind: "validation-failure";
-      reason: string;
-      failedFilePath: string;
-    }
-  // Distinguishable from "no-file" so the gateway can log specifically that
-  // a bootstrap file was found alongside live credentials and quarantined.
-  | { kind: "creds-already-present"; failedFilePath: string };
-
-const ACTIVATION_LINE_RE = /^act_[A-Za-z0-9_-]{20,200}$/;
+export type LegacyBootstrapOutcome = {
+  kind: "no-file" | "quarantined";
+  // Populated only when kind === "quarantined".
+  movedFrom?: string;
+  movedTo?: string;
+};
 
 /**
- * Try to consume ~/.agentrux/BOOTSTRAP.md as a one-shot activation ritual.
+ * Retire a leftover ~/.agentrux/BOOTSTRAP.md from an older install.
  *
- * Concurrency model
- * -----------------
- * Multiple gateway processes can race on the same BOOTSTRAP.md (Spot
- * preemption recovery, systemd restart overlapping a manual start, etc).
- * We claim ownership atomically by renaming BOOTSTRAP.md → BOOTSTRAP.md.inflight
- * BEFORE making any network call. POSIX rename(2) is atomic for the
- * source side: exactly one caller's rename succeeds, the others get ENOENT
- * and bail out as "no-file". The single winner then drives the API call.
- *
- * State transitions of the inflight file:
- *
- *   200 → unlink the inflight file (success). The ritual is over.
- *   4xx → rename inflight → .failed-<ts> + write sidecar (permanent failure).
- *         The original BOOTSTRAP.md is already gone, so OpenClaw's
- *         auto-restart loop sees no file and stays quiet.
- *   5xx / network → rename inflight BACK to BOOTSTRAP.md so the next
- *                   auto-restart attempt picks it up, then THROW the
- *                   transient error.
- *
- * Safety guards
- * -------------
- * - If credentials.json exists we quarantine the bootstrap file without
- *   calling the API. Burning a fresh single-use code on top of working
- *   credentials is strictly worse than the inconvenience of a manual
- *   reset. We surface this as the distinguishable kind:
- *   "creds-already-present" so the caller can log it specifically.
- * - We do NOT try to auto-recover an orphaned BOOTSTRAP.md.inflight from
- *   a prior hard crash. An earlier draft of this function did, and that
- *   recovery branch was itself the source of a concurrent race (a sibling
- *   caller that already held the inflight file would see its own claim
- *   restored out from under it). The current contract: orphan inflight
- *   files are left in place for the user to handle manually. The README
- *   documents the procedure (`mv BOOTSTRAP.md.inflight BOOTSTRAP.md`).
- *
- * The function never modifies credentials.json on a non-200 path.
+ * Returns "no-file" when nothing is there, or "quarantined" with the
+ * source and destination paths after renaming BOOTSTRAP.md to a unique
+ * BOOTSTRAP.md.legacy-<ts> sibling. The original file's contents are
+ * preserved at the new path; credentials.json is never touched.
  */
-export async function consumeBootstrapFile(params: {
-  baseUrl: string;
-}): Promise<BootstrapOutcome> {
-  // 1. Atomic claim. Whoever wins this rename owns the activation attempt.
-  //    Losers get ENOENT and short-circuit as no-file.
-  //
-  //    NOTE: we deliberately do NOT auto-recover an orphaned BOOTSTRAP.md.inflight
-  //    here. An earlier draft of this function tried to "restore" a stray
-  //    inflight file from a previous crash, but that recovery branch was
-  //    itself the source of a race: a sibling caller that already held the
-  //    inflight file would see its own claim "restored" out from under it,
-  //    and a second /auth/redeem-activation-code call would burn the single-use code.
-  //    If a hard crash leaves an orphan inflight file behind, the user must
-  //    rename it back to BOOTSTRAP.md by hand. The README documents this.
+export function quarantineLegacyBootstrap(): LegacyBootstrapOutcome {
+  const movedTo = pickUniqueLegacyPath();
   try {
-    fs.renameSync(BOOTSTRAP_PATH, INFLIGHT_PATH);
+    fs.renameSync(BOOTSTRAP_PATH, movedTo);
   } catch (err: any) {
+    // ENOENT = nothing to retire. POSIX rename(2) is atomic on the source
+    // side, so if two gateway processes start concurrently exactly one wins
+    // the rename and the loser sees ENOENT — we treat that as "no-file"
+    // rather than throwing and crashing the gateway's startup path.
     if (err?.code === "ENOENT") return { kind: "no-file" };
     throw err;
   }
-
-  // From here on, the file at INFLIGHT_PATH is OURS until we either
-  // unlink it (success), rename it to .failed-<ts> (permanent), or
-  // rename it back to BOOTSTRAP.md (transient).
-  let raw: string;
-  try {
-    raw = fs.readFileSync(INFLIGHT_PATH, "utf-8");
-  } catch (err: any) {
-    // Should not happen — we just renamed into this path. If it does,
-    // surface as transient so the next attempt retries cleanly.
-    throw new TransientActivationError(
-      `failed to read inflight bootstrap file: ${err?.message ?? err}`,
-    );
-  }
-
-  // 2. User-error guard: credentials already exist. We quarantine the
-  //    inflight file (no API call) and signal "no-file" so the gateway
-  //    treats this as "nothing to do".
-  if (loadCredentials() !== null) {
-    const failedPath = quarantineInflight({
-      reason: "credentials.json already exists; refusing to consume",
-    });
-    return { kind: "creds-already-present", failedFilePath: failedPath };
-  }
-
-  // 3. Parse + shape-check.
-  const code = extractActivationCode(raw);
-  if (!code) {
-    const failedPath = quarantineInflight({
-      reason: "no activation code line found",
-    });
-    return {
-      kind: "validation-failure",
-      reason: "no activation code line found in BOOTSTRAP.md",
-      failedFilePath: failedPath,
-    };
-  }
-  const v = validateActivationCode(code);
-  if (!v.ok) {
-    const failedPath = quarantineInflight({ reason: v.reason });
-    return {
-      kind: "validation-failure",
-      reason: v.reason,
-      failedFilePath: failedPath,
-    };
-  }
-
-  // 4. The single API call.
-  let outcome;
-  try {
-    outcome = await activate({
-      rawActivationCode: v.code,
-      baseUrl: params.baseUrl,
-    });
-  } catch (err) {
-    // Transient (5xx / network) — restore the file so the next attempt
-    // can succeed, then re-throw.
-    if (err instanceof TransientActivationError) {
-      restoreInflight();
-      throw err;
-    }
-    // Unknown — be conservative and restore so we do not lose user input.
-    restoreInflight();
-    throw err;
-  }
-
-  if (outcome.kind === "ok") {
-    try {
-      fs.unlinkSync(INFLIGHT_PATH);
-    } catch {
-      // Ignore.
-    }
-    return {
-      kind: "ok",
-      credentials: outcome.credentials,
-      grants: outcome.grants,
-    };
-  }
-
-  if (outcome.kind === "permanent") {
-    const failedPath = quarantineInflight({
-      reason: `${outcome.httpStatus} ${outcome.errorCode}: ${outcome.errorMessage}`,
-      httpStatus: outcome.httpStatus,
-      errorCode: outcome.errorCode,
-      errorMessage: outcome.errorMessage,
-    });
-    return {
-      kind: "permanent-failure",
-      httpStatus: outcome.httpStatus,
-      errorCode: outcome.errorCode,
-      errorMessage: outcome.errorMessage,
-      failedFilePath: failedPath,
-    };
-  }
-
-  // outcome.kind === "validation" — should not happen here because we
-  // pre-checked the code above. Defensive fallthrough.
-  const failedPath = quarantineInflight({ reason: outcome.reason });
-  return {
-    kind: "validation-failure",
-    reason: outcome.reason,
-    failedFilePath: failedPath,
-  };
+  return { kind: "quarantined", movedFrom: BOOTSTRAP_PATH, movedTo };
 }
 
 /**
- * Extract the first line from a BOOTSTRAP.md that looks like an activation
- * code. The file format is permissive: any line whose trimmed content
- * starts with `act_` is considered the code, so users can include markdown
- * commentary above and below.
+ * Pick a BOOTSTRAP.md.legacy-<ts> destination that does not collide with an
+ * existing one. The timestamp suffix has 1s resolution, so two retirements
+ * in the same wall-clock second fall back to `-2`, `-3`, ...
  */
-function extractActivationCode(raw: string): string | null {
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("act_")) return trimmed;
-  }
-  return null;
-}
-
-/**
- * Move the inflight bootstrap file aside (rename) and write a .json sidecar
- * with the failure reason. Returns the path of the renamed markdown file.
- *
- * The timestamp suffix protects against overwriting earlier failure
- * evidence if the user retries multiple bad codes.
- *
- * IMPORTANT: this only renames an EXISTING inflight file. It never
- * fabricates content from in-memory state — the previous version did,
- * which could create misleading "BOOTSTRAP.md.failed-*" files even after
- * a sibling process had already succeeded. The atomic-claim model in
- * consumeBootstrapFile() guarantees we own INFLIGHT_PATH at this point,
- * so the rename should never see ENOENT in the normal flow.
- */
-function quarantineInflight(details: {
-  reason: string;
-  httpStatus?: number;
-  errorCode?: string;
-  errorMessage?: string;
-}): string {
-  const failedMd = pickUniqueQuarantinePath();
-  const failedJson = `${failedMd}.json`;
-  fs.renameSync(INFLIGHT_PATH, failedMd);
-  const sidecar = {
-    reason: details.reason,
-    http_status: details.httpStatus ?? null,
-    error_code: details.errorCode ?? null,
-    error_message: details.errorMessage ?? null,
-    failed_at: new Date().toISOString(),
-  };
-  fs.writeFileSync(failedJson, JSON.stringify(sidecar, null, 2), {
-    mode: 0o600,
-  });
-  return failedMd;
-}
-
-/**
- * Pick a quarantine destination that does not collide with existing
- * `.failed-*` files. Two failures within the same wall-clock second would
- * otherwise overwrite each other (the timestamp suffix has 1s resolution).
- * We try the bare timestamp first, then `-2`, `-3`, ... up to a sane limit.
- */
-function pickUniqueQuarantinePath(): string {
+function pickUniqueLegacyPath(): string {
   const base = path.join(
     AGENTRUX_DIR,
-    `BOOTSTRAP.md.failed-${formatTimestampSuffix(new Date())}`,
+    `BOOTSTRAP.md.legacy-${formatTimestampSuffix(new Date())}`,
   );
-  if (!fs.existsSync(base) && !fs.existsSync(`${base}.json`)) return base;
+  if (!fs.existsSync(base)) return base;
   for (let i = 2; i < 1000; i++) {
     const candidate = `${base}-${i}`;
-    if (!fs.existsSync(candidate) && !fs.existsSync(`${candidate}.json`)) {
-      return candidate;
-    }
+    if (!fs.existsSync(candidate)) return candidate;
   }
-  // Pathological fallback: 1000 collisions in one second is essentially
-  // impossible. Append a high-resolution suffix so we still return a name.
   return `${base}-${process.hrtime.bigint().toString(36)}`;
-}
-
-/**
- * Restore the inflight file back to BOOTSTRAP.md so the next attempt
- * can try again. Used on transient failures and unexpected errors.
- *
- * IMPORTANT: this must NOT silently overwrite a BOOTSTRAP.md that the
- * user wrote between the original claim and the transient failure. POSIX
- * rename(2) overwrites the destination unconditionally, so we have to
- * check first. Concrete scenario:
- *
- *   1. User writes code A into BOOTSTRAP.md.
- *   2. Gateway claims it and starts /auth/redeem-activation-code.
- *   3. User decides A was wrong, overwrites BOOTSTRAP.md with code B.
- *   4. /auth/redeem-activation-code fails with HTTP 503.
- *   5. WITHOUT the guard below, restoreInflight() would clobber B with A.
- *      The user's fresh code is silently lost.
- *
- * With the guard: if a BOOTSTRAP.md already exists, the user has staged
- * a newer code; we drop the inflight (with its stale code A) by unlinking
- * it, and the next claim will pick up B as intended.
- */
-function restoreInflight(): void {
-  try {
-    if (fs.existsSync(BOOTSTRAP_PATH)) {
-      // User-side update happened during the API call. The newer BOOTSTRAP.md
-      // wins; drop the stale inflight rather than overwrite the user's input.
-      try {
-        fs.unlinkSync(INFLIGHT_PATH);
-      } catch {}
-      return;
-    }
-    fs.renameSync(INFLIGHT_PATH, BOOTSTRAP_PATH);
-  } catch {
-    // If both branches fail (filesystem error, permission, etc.) the user
-    // may see an inflight file lying around. The README documents the
-    // manual recovery procedure (mv inflight back to BOOTSTRAP.md).
-  }
 }
 
 function formatTimestampSuffix(d: Date): string {
