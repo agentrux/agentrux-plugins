@@ -192,6 +192,26 @@ export function invalidateIfStillCurrent(expected: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Typed API error
+// ---------------------------------------------------------------------------
+
+/**
+ * Carries the HTTP status + parsed body past the throw boundary so callers can
+ * react to structured server signals (e.g. the data-plane `ttl_expired` cursor
+ * hint) instead of pattern-matching a stringified message.
+ */
+export class ApiError extends Error {
+  status: number;
+  body: any;
+  constructor(status: number, body: any) {
+    super(`Request failed (${status}): ${typeof body === "string" ? body : JSON.stringify(body)}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Authenticated requests
 // ---------------------------------------------------------------------------
 
@@ -215,10 +235,10 @@ export async function authRequest(
     const retry = await httpJson(method, `${creds.base_url}${urlPath}`, body, {
       Authorization: `Bearer ${newToken}`,
     });
-    if (retry.status >= 400) throw new Error(`Request failed: ${JSON.stringify(retry.data)}`);
+    if (retry.status >= 400) throw new ApiError(retry.status, retry.data);
     return retry.data;
   }
-  if (r.status >= 400) throw new Error(`Request failed (${r.status}): ${JSON.stringify(r.data)}`);
+  if (r.status >= 400) throw new ApiError(r.status, r.data);
   return r.data;
 }
 
@@ -253,6 +273,29 @@ export async function pullEvents(
     `/topics/${ensureTopPrefix(topicId)}/events?${qs.toString()}`,
   );
   return result.events || [];
+}
+
+/**
+ * Read the data-plane TTL-expired cursor signal off a thrown error.
+ *
+ * When `?after=<evt>` points at an event that has aged past the topic's
+ * retention window, `pipe_router` answers 404 with
+ * `{detail:{details:{reason:"ttl_expired", oldest_available_evt_id}}, next_action:"cursor_advance"}`
+ * (FastAPI wraps the handler payload under `detail`). The pinned cursor can
+ * never become valid again, so the caller must re-anchor it.
+ */
+export function isTtlExpiredCursor(err: unknown): err is ApiError {
+  if (!(err instanceof ApiError) || err.status !== 404) return false;
+  const detail = err.body?.detail ?? err.body;
+  return detail?.details?.reason === "ttl_expired" || detail?.next_action === "cursor_advance";
+}
+
+/** Oldest still-retained event id from a `ttl_expired` response, or null. */
+export function extractOldestAvailable(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const detail = err.body?.detail ?? err.body;
+  const oldest = detail?.details?.oldest_available_evt_id;
+  return typeof oldest === "string" && oldest.length > 0 ? oldest : null;
 }
 
 /**
