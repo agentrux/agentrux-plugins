@@ -1,87 +1,44 @@
 """Unit tests for AgenTruxToolkit and TOOL_DEFINITIONS."""
+
 from __future__ import annotations
 
-import sys
-from types import ModuleType
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Stub the agentrux.sdk.facade module so the real SDK is not required.
-# This must happen BEFORE importing toolkit.
-# ---------------------------------------------------------------------------
-_fake_facade = ModuleType("agentrux.sdk.facade")
-_fake_client = ModuleType("agentrux.sdk.client")
+from agentrux_agent_tools.toolkit import TOOL_DEFINITIONS, AgenTruxToolkit
 
 
 class _StubClient:
-    """Minimal stub for AgenTruxClient used during import.
+    """Minimal stand-in for the local ``AgentRuxClient`` (agentrux_agent_tools.client).
 
-    Mirrors the v0.3 facade surface that toolkit.py touches:
-    ``from_access_token`` / ``from_client_credentials`` /
-    ``from_activation_code`` async factories, plus ``close``.
+    ``toolkit.create()`` constructs the client directly (no ``from_*`` factory) and
+    ``toolkit.close()`` awaits ``client.close()``, so the stub only needs an arg-tolerant
+    constructor plus an async ``close``.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         self._kwargs = kwargs
 
-    @classmethod
-    async def from_access_token(cls, **kwargs: Any) -> "_StubClient":
-        return cls(**kwargs)
-
-    @classmethod
-    async def from_client_credentials(cls, **kwargs: Any) -> "_StubClient":
-        return cls(**kwargs)
-
-    @classmethod
-    async def from_activation_code(cls, **kwargs: Any) -> "_StubClient":
-        return cls(**kwargs)
-
     async def close(self) -> None:
         pass
-
-
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class _StubTokenBundle:
-    access_token: str
-    refresh_token: str
-    expires_at_unix: int
-
-
-_fake_facade.AgenTruxClient = _StubClient  # type: ignore[attr-defined]
-_fake_client.TokenBundle = _StubTokenBundle  # type: ignore[attr-defined]
-
-# Build the parent package path so Python resolves the SDK submodules.
-for mod_name in (
-    "agentrux", "agentrux.sdk", "agentrux.sdk.facade", "agentrux.sdk.client",
-):
-    if mod_name not in sys.modules:
-        if mod_name == "agentrux.sdk.facade":
-            sys.modules[mod_name] = _fake_facade
-        elif mod_name == "agentrux.sdk.client":
-            sys.modules[mod_name] = _fake_client
-        else:
-            pkg = ModuleType(mod_name)
-            pkg.__path__ = []  # type: ignore[attr-defined]
-            sys.modules[mod_name] = pkg
-
-from agentrux_agent_tools.toolkit import TOOL_DEFINITIONS, AgenTruxToolkit
 
 
 # ---------------------------------------------------------------------------
 # Tests for TOOL_DEFINITIONS
 # ---------------------------------------------------------------------------
 
+
 class TestToolDefinitions:
     """Tests for the static TOOL_DEFINITIONS list."""
 
-    EXPECTED_TOOL_NAMES = {"publish_event", "list_events", "get_event", "wait_for_event"}
+    EXPECTED_TOOL_NAMES = {
+        "publish_event",
+        "list_events",
+        "get_event",
+        "wait_for_event",
+    }
 
     def test_contains_expected_tool_names(self) -> None:
         """TOOL_DEFINITIONS contains all four expected tool names."""
@@ -105,6 +62,7 @@ class TestToolDefinitions:
 # ---------------------------------------------------------------------------
 # Tests for get_tools / get_tools_anthropic
 # ---------------------------------------------------------------------------
+
 
 class TestGetTools:
     """Tests for tool format conversion methods."""
@@ -138,9 +96,7 @@ class TestGetTools:
             assert "type" not in t
             assert "function" not in t
 
-    def test_anthropic_tool_names_match_openai(
-        self, toolkit: AgenTruxToolkit
-    ) -> None:
+    def test_anthropic_tool_names_match_openai(self, toolkit: AgenTruxToolkit) -> None:
         """Anthropic and OpenAI formats expose the same tool names."""
         openai_names = {t["function"]["name"] for t in toolkit.get_tools()}
         anthropic_names = {t["name"] for t in toolkit.get_tools_anthropic()}
@@ -150,6 +106,7 @@ class TestGetTools:
 # ---------------------------------------------------------------------------
 # Tests for AgenTruxToolkit.create() validation
 # ---------------------------------------------------------------------------
+
 
 class TestToolkitCreate:
     """Tests for AgenTruxToolkit.create() parameter validation."""
@@ -187,8 +144,11 @@ class TestToolkitCreate:
         # constant directly to point at an empty tmp_path.
         from pathlib import Path as _Path
         import agentrux_agent_tools.toolkit as _tk
+
         monkeypatch.setattr(
-            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+            _tk,
+            "_CREDENTIALS_PATH",
+            _Path(tmp_path) / ".agentrux" / "credentials",
         )
 
         with pytest.raises(ValueError, match="No credentials found"):
@@ -216,8 +176,11 @@ class TestToolkitCreate:
         monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "secret-abc")
         from pathlib import Path as _Path
         import agentrux_agent_tools.toolkit as _tk
+
         monkeypatch.setattr(
-            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+            _tk,
+            "_CREDENTIALS_PATH",
+            _Path(tmp_path) / ".agentrux" / "credentials",
         )
 
         with pytest.raises(ValueError, match="No credentials found"):
@@ -232,8 +195,11 @@ class TestToolkitCreate:
         monkeypatch.setenv("AGENTRUX_CLIENT_ID", "crd_abc")
         from pathlib import Path as _Path
         import agentrux_agent_tools.toolkit as _tk
+
         monkeypatch.setattr(
-            _tk, "_CREDENTIALS_PATH", _Path(tmp_path) / ".agentrux" / "credentials",
+            _tk,
+            "_CREDENTIALS_PATH",
+            _Path(tmp_path) / ".agentrux" / "credentials",
         )
 
         with pytest.raises(ValueError, match="No credentials found"):
@@ -243,6 +209,7 @@ class TestToolkitCreate:
 # ---------------------------------------------------------------------------
 # Tests for env var naming convention
 # ---------------------------------------------------------------------------
+
 
 class TestEnvVarNaming:
     """Verify the expected environment variable names are used."""
@@ -266,19 +233,16 @@ class TestEnvVarNaming:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """create() reads AGENTRUX_BASE_URL / AGENTRUX_CLIENT_ID /
-        AGENTRUX_CLIENT_SECRET and dispatches to from_client_credentials."""
+        AGENTRUX_CLIENT_SECRET and constructs AgentRuxClient with them (Path 2)."""
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
         monkeypatch.setenv("AGENTRUX_CLIENT_ID", "crd_abc")
         monkeypatch.setenv("AGENTRUX_CLIENT_SECRET", "aks_secret")
 
-        from_cc = AsyncMock(return_value=_StubClient())
-        with patch(
-            "agentrux_agent_tools.toolkit.AgenTruxClient.from_client_credentials",
-            from_cc,
-        ):
+        ctor = MagicMock(return_value=_StubClient())
+        with patch("agentrux_agent_tools.toolkit.AgentRuxClient", ctor):
             toolkit = await AgenTruxToolkit.create()
 
-        from_cc.assert_called_once_with(
+        ctor.assert_called_once_with(
             base_url="https://api.example.com",
             client_id="crd_abc",
             client_secret="aks_secret",
@@ -286,22 +250,18 @@ class TestEnvVarNaming:
         await toolkit.close()
 
     @pytest.mark.asyncio
-    async def test_activation_code_env_var(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """AGENTRUX_ACTIVATION_CODE routes to from_activation_code."""
+    async def test_access_token_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AGENTRUX_ACCESS_TOKEN + AGENTRUX_BASE_URL constructs AgentRuxClient
+        with token= (Path 1, no refresh wiring)."""
         monkeypatch.setenv("AGENTRUX_BASE_URL", "https://api.example.com")
-        monkeypatch.setenv("AGENTRUX_ACTIVATION_CODE", "act_xyz")
+        monkeypatch.setenv("AGENTRUX_ACCESS_TOKEN", "AT-explicit")
 
-        from_ac = AsyncMock(return_value=_StubClient())
-        with patch(
-            "agentrux_agent_tools.toolkit.AgenTruxClient.from_activation_code",
-            from_ac,
-        ):
+        ctor = MagicMock(return_value=_StubClient())
+        with patch("agentrux_agent_tools.toolkit.AgentRuxClient", ctor):
             toolkit = await AgenTruxToolkit.create()
 
-        from_ac.assert_called_once_with(
+        ctor.assert_called_once_with(
             base_url="https://api.example.com",
-            activation_code="act_xyz",
+            token="AT-explicit",
         )
         await toolkit.close()

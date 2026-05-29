@@ -50,7 +50,7 @@ import sys
 import time
 import uuid
 
-from agentrux.sdk import AgenTruxClient
+from agentrux.sdk import AgentRuxClient
 
 EVENT_TYPE = "demo.request"
 POLL_INTERVAL_S = 1.0
@@ -83,45 +83,53 @@ async def main() -> int:
     print(f"[verify] sink(Topic3)={sink}")
     print(f"[verify] correlation_id={correlation_id}")
 
-    async with await AgenTruxClient.from_client_credentials(
-        base_url, client_id=client_id, client_secret=client_secret
+    async with AgentRuxClient(
+        endpoint=base_url, client_id=client_id, client_secret=client_secret
     ) as client:
         # 1) publish to SOURCE — Dify trigger should fire on this.
         t_send = time.monotonic()
-        pub = await client.publish(source, EVENT_TYPE, sent_payload)
+        pub = await client.publish(
+            topic_id=source, payload=sent_payload, event_type=EVENT_TYPE
+        )
         print(f"[verify] published evt={pub.event_id} seq={pub.sequence_number}")
 
         # 2) poll SINK until a matching correlation_id arrives, or timeout.
         deadline = t_send + TIMEOUT_S
         cursor: str | None = None
         while time.monotonic() < deadline:
-            page = await client.list_events(sink, after=cursor, limit=50, order="asc")
-            for env in page.events:
-                payload = env.payload or {}
+            async for evt in client.read_pull(
+                topic_id=sink, after=cursor, limit=50, stop_when_empty=True
+            ):
+                cursor = evt.event_id
+                payload = evt.payload or {}
                 if not isinstance(payload, dict):
                     continue
                 if payload.get("correlation_id") == correlation_id:
                     elapsed_ms = int((time.monotonic() - t_send) * 1000)
                     print(f"[verify] PASS — round-trip in {elapsed_ms} ms")
-                    print(f"[verify] sink event_id={env.event_id} "
-                          f"event_type={env.event_type} seq={env.sequence_number}")
-                    print(f"[verify] sink payload="
-                          f"{json.dumps(payload, ensure_ascii=False, indent=2)}")
+                    print(
+                        f"[verify] sink event_id={evt.event_id} "
+                        f"event_type={evt.event_type} seq={evt.sequence_number}"
+                    )
+                    print(
+                        f"[verify] sink payload="
+                        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+                    )
                     return 0
-            # advance cursor only when there is a fresh tail
-            if page.events:
-                cursor = f"evt_{page.events[-1].event_id}"
             await asyncio.sleep(POLL_INTERVAL_S)
 
-        print(f"[verify] FAIL — no matching correlation_id on sink "
-              f"within {TIMEOUT_S}s")
+        print(
+            f"[verify] FAIL — no matching correlation_id on sink "
+            f"within {TIMEOUT_S}s"
+        )
         print("[verify] checklist:")
         print("  - Dify workflow imported AND published?")
         print("  - Trigger connection AC has topic.read on SOURCE_TOPIC_ID?")
-        print("  - Trigger event_type_filter matches "
-              f"'{EVENT_TYPE}' (or empty)?")
-        print("  - Trigger delivery_mode=sse (NAT-friendly) and Dify can reach "
-              "AgenTrux SSE?")
+        print("  - Trigger event_type_filter matches " f"'{EVENT_TYPE}' (or empty)?")
+        print(
+            "  - Trigger delivery_mode=sse (NAT-friendly) and Dify can reach "
+            "AgenTrux SSE?"
+        )
         print("  - Publish node topic_id == SINK_TOPIC_ID?")
         print("  - Tools connection has topic.write on SINK_TOPIC_ID?")
         return 1
