@@ -12,7 +12,9 @@ stubs for the trigger interfaces the module imports at load time.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src-trigger-1.0.8"
+SRC = Path(__file__).resolve().parents[1] / "src-trigger"
 sys.path.insert(0, str(SRC))
 
 
@@ -224,3 +226,50 @@ def test_first_hint_uses_skip_to_latest(_in_tmp):
         )
     assert out.variables["event_id"] == "evt_latest"
     assert calls == [(None, 1, "desc")]
+
+
+# ---------------------------------------------------------------------------
+# 3. _prune_stale_cursors — bounded on-disk state (v1.0.9)
+# ---------------------------------------------------------------------------
+
+def _age(sub_id: str, seconds_ago: float) -> None:
+    t = time.time() - seconds_ago
+    os.utime(ne._cursor_path(sub_id), (t, t))
+
+
+def test_prune_removes_only_stale_dead_subscription_cursors(_in_tmp):
+    ne._write_cursor("live", "evt_live")
+    ne._write_cursor("dead", "evt_dead")
+    ne._write_cursor("recent_other", "evt_other")
+    _age("dead", ne.CURSOR_STALE_SECONDS + 100)   # past retention → prunable
+    _age("live", ne.CURSOR_STALE_SECONDS + 100)   # old but is the current sub
+
+    ne._prune_stale_cursors("live")
+
+    assert not ne._cursor_path("dead").exists()        # stale dead sub → pruned
+    assert ne._cursor_path("live").exists()            # current sub kept (by name)
+    assert ne._cursor_path("recent_other").exists()    # recent → kept
+
+
+def test_prune_keeps_recent_cursors(_in_tmp):
+    ne._write_cursor("a", "evt_a")
+    ne._write_cursor("b", "evt_b")
+    _age("b", ne.CURSOR_STALE_SECONDS - 3600)  # just under threshold
+    ne._prune_stale_cursors("a")
+    assert ne._cursor_path("a").exists()
+    assert ne._cursor_path("b").exists()
+
+
+def test_prune_is_noop_with_no_cursor_files(_in_tmp):
+    ne._prune_stale_cursors("nobody")  # must not raise
+    assert not ne._cursor_path("nobody").exists()
+
+
+def test_prune_does_not_touch_unrelated_files(_in_tmp):
+    ne._write_cursor("dead", "evt_dead")
+    _age("dead", ne.CURSOR_STALE_SECONDS + 100)
+    other = Path(".agentrux_activated.json")
+    other.write_text("{}")  # credential cache must survive cursor prune
+    ne._prune_stale_cursors("live")
+    assert not ne._cursor_path("dead").exists()
+    assert other.exists()

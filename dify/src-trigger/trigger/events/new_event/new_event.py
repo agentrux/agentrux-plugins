@@ -21,6 +21,7 @@ import logging
 import os
 import pathlib
 import tempfile
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -98,6 +99,31 @@ def _clear_cursor(subscription_id: str) -> None:
         logger.warning("cursor clear failed for %s: %s", subscription_id, e)
 
 
+# Retire cursor files that have not been touched in longer than the server's max
+# retention window. Whether such a subscription is dead or merely quiet, its
+# pinned evt_id is past retention, so the next hint re-anchors via skip-to-latest
+# (the same path as a ttl_expired cursor) — deleting it is loss-free and keeps
+# on-disk state bounded (avoids per-subscription file accumulation). The current
+# subscription's cursor is always preserved by exact-name match.
+CURSOR_STALE_SECONDS = 30 * 24 * 3600  # 30d == server RETENTION_MAX (topic_retention.py)
+
+
+def _prune_stale_cursors(keep_subscription_id: str) -> None:
+    try:
+        keep = _cursor_path(keep_subscription_id)
+        cutoff = time.time() - CURSOR_STALE_SECONDS
+        for p in keep.parent.glob(".agentrux_cursor_v2_*.json"):
+            if p == keep:
+                continue
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except FileNotFoundError:
+                pass
+    except Exception as e:
+        logger.warning("cursor prune failed: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # Event handler
 # ---------------------------------------------------------------------------
@@ -129,6 +155,9 @@ class NewEventEvent(Event):
         if creds is None:
             raise EventIgnoreError()
         client_id, client_secret = creds
+
+        if subscription_id:
+            _prune_stale_cursors(subscription_id)
 
         cursor = _read_cursor(subscription_id) if subscription_id else None
 
