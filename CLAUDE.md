@@ -53,7 +53,7 @@ GitHub Actions がタグを検知して自動で PyPI / npm に公開する。
 |------------|----------------------|------------|
 | sdk/ | `agentrux-sdk` | `sdk-v` |
 | agent-sdk/ | `agentrux-agent-tools` | `agent-sdk-v` |
-| openclaw/ | `@agentrux/agentrux-openclaw-plugin` | `openclaw-v` |
+| openclaw/ | `@agentrux/openclaw-plugin` | `openclaw-v` |
 
 ### 廃止プラグイン (2026-05-02)
 

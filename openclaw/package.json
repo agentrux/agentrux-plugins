@@ -1,6 +1,6 @@
 {
-  "name": "@agentrux/agentrux-openclaw-plugin",
-  "version": "1.0.19",
+  "name": "@agentrux/openclaw-plugin",
+  "version": "1.0.20",
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
   "keywords": [
     "openclaw",
@@ -34,7 +34,7 @@
       "./dist/index.js"
     ],
     "install": {
-      "npmSpec": "@agentrux/agentrux-openclaw-plugin"
+      "npmSpec": "@agentrux/openclaw-plugin"
     }
   },
   "devDependencies": {

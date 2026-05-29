@@ -1,6 +1,6 @@
 {
   "id": "agentrux-openclaw-plugin",
-  "name": "@agentrux/agentrux-openclaw-plugin",
+  "name": "@agentrux/openclaw-plugin",
   "description": "AgenTrux ingress + tools for OpenClaw — Agent-to-Agent authenticated Pub/Sub",
   "entry": "dist/index.js",
   "configSchema": {

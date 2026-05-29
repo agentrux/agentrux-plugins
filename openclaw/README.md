@@ -29,10 +29,10 @@ All bug fixes have unit-test coverage (77 cases pinning the contract) and were v
 
 ```bash
 # From the local tarball that ships with this repo:
-openclaw plugins install ./agentrux-agentrux-openclaw-plugin-0.7.4.tgz
+openclaw plugins install ./agentrux-openclaw-plugin-1.0.20.tgz
 
 # Or, if it has been published to a registry:
-openclaw plugins install @agentrux/agentrux-openclaw-plugin@0.7.4
+openclaw plugins install @agentrux/openclaw-plugin@1.0.20
 
 openclaw plugins list   # confirm: agentrux-openclaw-plugin (0.7.4) Format: openclaw
 ```
