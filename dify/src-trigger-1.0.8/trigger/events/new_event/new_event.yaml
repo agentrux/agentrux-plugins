@@ -1,0 +1,58 @@
+identity:
+  name: new_event
+  author: agentrux
+  label:
+    en_US: New Event
+    ja_JP: 新規イベント
+
+description:
+  en_US: Fires when a new event is published to the monitored AgenTrux topic
+  ja_JP: 監視対象の AgenTrux トピックに新しいイベントが publish されたときに発火
+
+parameters:
+  - name: event_type_filter
+    label:
+      en_US: Event Type Filter
+      ja_JP: イベントタイプフィルタ
+    type: string
+    required: false
+    description:
+      en_US: "Only trigger for events of this type (e.g. 'dify.request'). Leave empty for all."
+      ja_JP: "このタイプのイベントのみ発火（例: 'dify.request'）。空欄で全イベント。"
+
+output_schema:
+  type: object
+  properties:
+    event_id:
+      type: string
+    sequence_number:
+      type: number
+    event_type:
+      type: string
+    topic_id:
+      type: string
+    message:
+      type: string
+    request_id:
+      type: string
+    conversation_key:
+      type: string
+    group_id:
+      type: string
+      description: composer_event_format.md §3-1; same group_id = 1 logical message (text + attachments)
+    payload_json:
+      type: string
+    metadata_json:
+      type: string
+      description: Opaque JSON of event metadata (filename / content_type / size_bytes / group_id / request_id / etc.)
+    attachment_urls:
+      type: string
+  # composer.upload event は inline payload 無しのため message は空文字。
+  # required から外し workflow author に「空でも valid」 を明示する。
+  required:
+    - event_id
+    - topic_id
+
+extra:
+  python:
+    source: trigger/events/new_event/new_event.py

@@ -1,0 +1,66 @@
+identity:
+  author: agentrux
+  name: agentrux-trigger
+  label:
+    en_US: AgenTrux Event
+    ja_JP: AgenTrux イベント
+  description:
+    en_US: Triggers a workflow when a new event is published to an AgenTrux topic
+    ja_JP: AgenTrux トピックに新しいイベントが publish されたときにワークフローを起動
+  icon: icon.svg
+
+# AC-based subscription: user pastes an AgenTrux Activation Code; the
+# trigger consumes it (idempotent via local disk cache keyed on AC
+# fingerprint) and derives client_id / client_secret internally. From
+# Phase 1.9+ the AC redemption endpoint is POST /auth/redeem-activation-code
+# and the OAuth grant is client_credentials on POST /oauth/token.
+subscription_schema:
+  - name: base_url
+    type: text-input
+    required: true
+    label:
+      en_US: AgenTrux API URL
+      ja_JP: AgenTrux API URL
+    default: https://api.agentrux.com
+  - name: activation_code
+    type: secret-input
+    required: true
+    label:
+      en_US: Activation Code
+      ja_JP: アクティベーションコード
+    description:
+      en_US: "Single-use AC (act_...). Consumed on Save and exchanged for persistent Script credentials. Idempotent on re-save via local cache."
+      ja_JP: "1 度のみ使用可能な AC (act_...)。保存時に消費され永続化された Script 認証情報と交換されます。ローカルキャッシュで再保存には冪等。"
+  - name: delivery_mode
+    type: select
+    required: true
+    default: webhook
+    options:
+      - value: webhook
+        label:
+          en_US: Webhook (default)
+          ja_JP: Webhook (デフォルト)
+      - value: sse
+        label:
+          en_US: SSE pull (NAT-friendly)
+          ja_JP: SSE pull (NAT 内環境向け)
+    label:
+      en_US: Delivery mode
+      ja_JP: 配送モード
+    description:
+      en_US: "webhook = AgenTrux POSTs to this Dify endpoint (requires public reachability). sse = the plugin opens an outbound SSE connection to AgenTrux and dispatches events locally — works from inside NAT without a tunnel."
+      ja_JP: "webhook = AgenTrux からこの Dify エンドポイントに POST されます（公開到達性が必要）。sse = プラグインが AgenTrux に outbound SSE 接続を張り、ローカル配送します — NAT 内でもトンネル不要。"
+
+subscription_constructor:
+  parameters: []
+  credentials_schema: []
+  extra:
+    python:
+      source: trigger/agentrux_trigger.py
+
+events:
+  - trigger/events/new_event/new_event.yaml
+
+extra:
+  python:
+    source: trigger/agentrux_trigger.py
