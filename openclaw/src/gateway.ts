@@ -17,7 +17,7 @@ import {
   AGENTRUX_DIR,
   WATERLINE_PATH,
 } from "./credentials";
-import { httpJson, pullEvents, ensureToken, invalidateToken, authRequest, ensureTopPrefix, PLUGIN_USER_AGENT, isTtlExpiredCursor, extractOldestAvailable } from "./http-client";
+import { httpJson, pullEvents, ensureToken, invalidateToken, authRequest, ensureTopPrefix, PLUGIN_USER_AGENT, isTtlExpiredCursor } from "./http-client";
 import { quarantineLegacyBootstrap } from "./activation-core";
 import { wrapMessage } from "./sanitize";
 import { getPluginRuntime } from "./runtime";
@@ -95,49 +95,25 @@ function saveWaterline(topicId: string, entry: WaterlineEntry): void {
  * Recompute a topic's cursor after the server reports it as `ttl_expired`.
  *
  * A persisted cursor is only valid inside the topic's retention window; once
- * the pinned event ages out the pull loops on a 404 forever. The expired
- * cursor can never become valid again, so it self-heals here with the
- * configured delivery semantics intact:
- *   - durable (`resumeFromLastSeq`): jump to the oldest still-retained event to
- *     minimize loss — unless that yields no forward progress, in which case we
- *     fall through to skip-to-latest to break the loop. (Startup trusts the
- *     saved cursor; at runtime that cursor is gone, so oldest-available is the
- *     least-loss anchor still available.)
- *   - chat default: skip to latest — the same skip-to-latest the gateway does
- *     at a fresh (re)start — so a 24h backlog isn't replayed.
+ * the pinned event ages out the pull loops on a 404 forever. The expired cursor
+ * can never become valid again, so we re-anchor to the START of the retained
+ * window and drain forward FIFO: returning `event_id: ""` makes the next pull
+ * use `after=null`, which (in ascending order) yields the oldest still-retained
+ * event inclusive. This recovers every still-retained event with no gap — unlike
+ * skip-to-latest, which would drop the oldest..head window — and self-heals the
+ * 404 loop because each processed event advances the cursor. If the topic is now
+ * empty the next pull simply returns nothing.
  *
- * `fetchLatest` returns the newest retained event (or null when the topic is
- * empty); injected so this stays a pure decision function, testable against
- * the real implementation without HTTP.
+ * Applies to both chat and durable accounts: dropping retained, recoverable
+ * events to "avoid replaying backlog" is exactly the gap we want to eliminate.
+ * Note: on a large retained window (e.g. a long offline gap) this re-dispatches
+ * the whole still-retained backlog in one burst — intended, since "no gap" wins.
  */
-export async function reanchorExpiredCursor(
-  durable: boolean,
-  err: unknown,
-  currentEventId: string,
-  fetchLatest: () => Promise<WaterlineEntry | null>,
-  topicId: string,
-  log?: any,
-): Promise<WaterlineEntry> {
-  const oldest = extractOldestAvailable(err);
-  if (durable && oldest && oldest !== currentEventId) {
-    log?.warn?.(`[agentrux] Cursor expired (ttl); durable re-anchor to oldest=${oldest} topic=${topicId}`);
-    return { sequence_number: 0, event_id: oldest };
-  }
-  const latest = await fetchLatest();
-  if (latest) {
-    log?.warn?.(`[agentrux] Cursor expired (ttl); skipped to latest seq=${latest.sequence_number} topic=${topicId}`);
-    return { sequence_number: Number(latest.sequence_number || 0), event_id: String(latest.event_id || "") };
-  }
-  log?.warn?.(`[agentrux] Cursor expired (ttl); topic now empty, waterline reset topic=${topicId}`);
+export function reanchorExpiredCursor(topicId: string, log?: any): WaterlineEntry {
+  log?.warn?.(
+    `[agentrux] Cursor expired (ttl); re-anchoring to oldest retained (FIFO drain) topic=${topicId}`,
+  );
   return { sequence_number: 0, event_id: "" };
-}
-
-/** Newest retained event for a topic, or null when empty (skip-to-latest source). */
-async function fetchLatestEvent(creds: Credentials, topicId: string, excludeSelf: boolean): Promise<WaterlineEntry | null> {
-  const batch = await pullEvents(creds, topicId, null, 1, "desc", { excludeSelf });
-  if (batch.length === 0) return null;
-  const e = batch[0];
-  return { sequence_number: Number(e.sequence_number || 0), event_id: String(e.event_id || "") };
 }
 
 // ---------------------------------------------------------------------------
@@ -315,11 +291,7 @@ export const agentruxGateway = {
             batch = await pullEvents(creds!, account.commandTopicId, afterEvtId, 20, "asc", { excludeSelf: account.excludeOwnEvents });
           } catch (err: any) {
             if (isTtlExpiredCursor(err)) {
-              waterline = await reanchorExpiredCursor(
-                account.resumeFromLastSeq, err, waterline.event_id,
-                () => fetchLatestEvent(creds!, account.commandTopicId, account.excludeOwnEvents),
-                account.commandTopicId, log,
-              );
+              waterline = reanchorExpiredCursor(account.commandTopicId, log);
               saveWaterline(topicId, waterline);
               continue;
             }
@@ -706,11 +678,7 @@ export const agentruxGateway = {
                         batch = await pullEvents(creds!, mtTopicId, mtWaterline.event_id || null, 20, "asc", { excludeSelf: account.excludeOwnEvents });
                       } catch (err: any) {
                         if (isTtlExpiredCursor(err)) {
-                          mtWaterline = await reanchorExpiredCursor(
-                            account.resumeFromLastSeq, err, mtWaterline.event_id,
-                            () => fetchLatestEvent(creds!, mtTopicId, account.excludeOwnEvents),
-                            mtTopicId, log,
-                          );
+                          mtWaterline = reanchorExpiredCursor(mtTopicId, log);
                           saveWaterline(mtTopicId, mtWaterline);
                           continue;
                         }

@@ -99,14 +99,10 @@ describe("drain loop self-heals on ttl_expired", () => {
     return m ? m.sequence_number : 0;
   }
 
-  async function runDrain(durable: boolean): Promise<{ waterline: Waterline; processed: string[]; iterations: number }> {
+  async function runDrain(): Promise<{ waterline: Waterline; processed: string[]; iterations: number }> {
     let waterline: Waterline = { sequence_number: 0, event_id: "evt_stale" };
     const processed: string[] = [];
     const pull = makePull("evt_stale");
-    const pullLatest = async () => {
-      const b = await pull(null, "desc");
-      return b.length ? b[0] : null;
-    };
 
     let iterations = 0;
     while (true) {
@@ -116,7 +112,7 @@ describe("drain loop self-heals on ttl_expired", () => {
         batch = await pull(waterline.event_id || null, "asc");
       } catch (err) {
         if (isTtlExpiredCursor(err)) {
-          waterline = await reanchorExpiredCursor(durable, err, waterline.event_id, pullLatest, "top_test");
+          waterline = reanchorExpiredCursor("top_test");
           continue;
         }
         throw err;
@@ -131,28 +127,17 @@ describe("drain loop self-heals on ttl_expired", () => {
     return { waterline, processed, iterations };
   }
 
-  test("chat default: skips backlog to latest and terminates", async () => {
-    const { waterline, processed } = await runDrain(false);
-    // Skip-to-latest: cursor jumps to the newest event, no backlog replayed.
-    expect(waterline.event_id).toBe(LATEST.event_id);
-    expect(waterline.sequence_number).toBe(LATEST.sequence_number);
-    expect(processed).toEqual([]);
-  });
-
-  test("durable: re-anchors to oldest available and replays the live window", async () => {
-    const { waterline, processed } = await runDrain(true);
-    // Durable re-anchor to evt_100 → ?after=evt_100 yields evt_101.
-    expect(processed).toEqual(["evt_101"]);
+  test("ttl_expired re-anchors to oldest retained and drains the full window FIFO (no gap)", async () => {
+    const { waterline, processed } = await runDrain();
+    // Re-anchor to retained start (event_id="" => after=null, asc) → oldest-first,
+    // nothing skipped (vs skip-to-latest which would drop evt_100).
+    expect(processed).toEqual(["evt_100", "evt_101"]);
     expect(waterline.event_id).toBe("evt_101");
+    expect(waterline.sequence_number).toBe(101);
   });
 
-  test("durable with no progress (oldest == current) falls back to skip-to-latest", async () => {
-    // Cursor already sits on the oldest-available value; re-anchoring there
-    // again would loop, so we must skip to latest instead.
-    let waterline: Waterline = { sequence_number: 0, event_id: "evt_100" };
-    const err = new ApiError(404, ttlExpiredBody("evt_100"));
-    const pullLatest = async () => ({ sequence_number: LATEST.sequence_number, event_id: LATEST.event_id });
-    waterline = await reanchorExpiredCursor(true, err, waterline.event_id, pullLatest, "top_test");
-    expect(waterline.event_id).toBe(LATEST.event_id);
+  test("re-anchor self-heals the 404 loop and terminates", async () => {
+    const { iterations } = await runDrain();
+    expect(iterations).toBeLessThan(50);
   });
 });
