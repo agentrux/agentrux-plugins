@@ -1,18 +1,32 @@
-"""MCP client setup CLI — runs RFC 8628 device flow + outputs MCP server config snippet.
+"""MCP client setup CLI — OAuth 2.1 device flow (plain or topology) + MCP config snippet.
 
-SSOT: docs/04_design/auth/device_code_setup_v1.md §4-3
+SSOT: docs/04_design/auth/device_code_setup_v1.md §4-3 (plain)
+      docs/04_design/auth/topology_request_v1.md (topology mode、 2026-05-29 整合追加)
 
-Usage:
+MCP ⟷ plugin 認証経路整合 (ユーザ要求 2026-05-29): OpenClaw / Dify が `setup_mode`
+(device_code | topology) を選択可能なのに合わせ、 MCP setup CLI も `--setup-mode topology`
+を提供する。 両 mode とも OAuth 2.1 + DCR + RFC 8628 device flow を共有 (well-known
+metadata の `topology_request_endpoint` で discovery 可能)。
+
+Usage (plain device code、 既存):
     $ python -m agentrux.sdk.mcp_setup_cli \\
         --base-url https://api.agentrux.com \\
         --client-name "Cursor on MacBook Pro" \\
         --scope topic.read,topic.write
 
-Flow:
-    1. DCR (POST /oauth/register) で public client を取得
-    2. setup_via_device_code() を呼んで device flow + polling
-    3. Token bundle を保存 (default: ~/.agentrux/mcp_<client_name_slug>.json、 0o600)
-    4. Cursor / Claude Desktop MCP server config の snippet を stdout に表示
+Usage (topology mode、 1 step で Script + Topics + Grants 宣言):
+    $ python -m agentrux.sdk.mcp_setup_cli \\
+        --base-url https://api.agentrux.com \\
+        --client-name "Cursor on MacBook Pro" \\
+        --setup-mode topology \\
+        --script-name weather-bot \\
+        --description "WeatherAPI を Composer に流す" \\
+        --topic "weather-data:write" --topic "weather-data:read"
+
+Flow (plain):
+    1. DCR → 2. setup_via_device_code() → 3. token bundle 保存 → 4. config snippet
+Flow (topology):
+    1. DCR → 2. install_topology() (RAR declare + picker approve) → 3-4. 同上
 
 Token storage (Codex round 1 MF-7):
     - default は file (host machine ID 派生鍵で AES-256-GCM 暗号化、 plugins_design.md §13-2)
@@ -42,6 +56,13 @@ from agentrux.sdk.device_code_setup import (
     InstallTimeoutError,
     setup_via_device_code,
 )
+from agentrux.sdk.topology_install import (
+    InstallResult,
+    TopologyDeclaration,
+    TopologyGrantSpec,
+    TopologyTopicSpec,
+    install_topology,
+)
 
 
 def _slug(name: str) -> str:
@@ -57,9 +78,9 @@ def _credentials_path(client_name: str) -> pathlib.Path:
 
 def _dcr_register(base_url: str, client_name: str) -> str:
     """POST /oauth/register で public client (token_endpoint_auth_method=none) を作る."""
-    body = json.dumps(
-        {"client_name": client_name, "token_endpoint_auth_method": "none"}
-    ).encode("utf-8")
+    body = json.dumps({"client_name": client_name, "token_endpoint_auth_method": "none"}).encode(
+        "utf-8"
+    )
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/oauth/register",
         data=body,
@@ -73,9 +94,7 @@ def _dcr_register(base_url: str, client_name: str) -> str:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status != 201:
-                raise RuntimeError(
-                    f"DCR failed (status={resp.status}): {resp.read().decode()}"
-                )
+                raise RuntimeError(f"DCR failed (status={resp.status}): {resp.read().decode()}")
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise RuntimeError(
@@ -118,9 +137,45 @@ def _print_user_code(user_code: str, url: str, auto_open: bool = True) -> None:
     print("", file=sys.stderr)
 
 
+def _parse_topic_arg(spec: str) -> tuple[str, str, str | None]:
+    """`name:scope[:binding]` → (name, scope, binding_or_None). topology mode 専用."""
+    parts = spec.split(":")
+    if len(parts) < 2 or len(parts) > 3:
+        raise ValueError(f"--topic format must be NAME:SCOPE[:BINDING], got {spec!r}")
+    name, scope = parts[0], parts[1]
+    binding = parts[2] if len(parts) == 3 else None
+    if scope not in ("read", "write"):
+        raise ValueError(f"scope must be 'read' or 'write', got {scope!r}")
+    return name, scope, binding
+
+
+def _build_declaration(args: argparse.Namespace) -> TopologyDeclaration:
+    """topology mode: CLI args から TopologyDeclaration を構築 (topology_setup_cli と同 logic)."""
+    topic_specs: dict[str, TopologyTopicSpec] = {}
+    grant_specs: list[TopologyGrantSpec] = []
+    for raw in args.topic:
+        name, scope, binding = _parse_topic_arg(raw)
+        ref = name
+        if ref not in topic_specs:
+            topic_specs[ref] = TopologyTopicSpec(
+                ref=ref, name=name, retention_s=args.retention, intent=None
+            )
+        binding_name = binding or f"{ref}-{scope}"
+        grant_specs.append(
+            TopologyGrantSpec(topic_ref=ref, scope=scope, binding_name=binding_name)  # type: ignore[arg-type]
+        )
+    return TopologyDeclaration(
+        script_name=args.script_name,
+        description=args.description,
+        topics=tuple(topic_specs.values()),
+        grants=tuple(grant_specs),
+    )
+
+
 async def _async_main(args: argparse.Namespace) -> int:
     base_url = args.base_url.rstrip("/")
     scope = [s.strip() for s in args.scope.split(",") if s.strip()]
+    is_topology = args.setup_mode == "topology"
 
     # 1) DCR
     print(f"[1/3] DCR (POST /oauth/register) client_name={args.client_name!r}", file=sys.stderr)
@@ -131,32 +186,81 @@ async def _async_main(args: argparse.Namespace) -> int:
         return 1
     print(f"      dcr_client_id={dcr_client_id}", file=sys.stderr)
 
-    # 2) Device flow setup
-    print("[2/3] Device flow (POST /oauth/device/authorize → poll /oauth/token)", file=sys.stderr)
-    try:
-        result: DeviceCodeSetupResult = await setup_via_device_code(
-            base_url=base_url,
-            client_id=dcr_client_id,
-            scope=scope,
-            on_user_code=lambda info: _print_user_code(
-                info.user_code,
-                info.verification_uri_complete,
-                auto_open=not args.no_auto_open,
-            ),
-            timeout=args.timeout,
+    # 2) Device flow setup (mode 分岐: plain device_code or topology RAR)
+    result: DeviceCodeSetupResult | InstallResult
+    if is_topology:
+        # topology mode: Script + Topics + Grants を 1 step で declare (RAR)。
+        # well-known の topology_request_endpoint で advertise 済 (MCP/plugin 整合 2026-05-29)。
+        if not args.script_name or not args.description or not args.topic:
+            print(
+                "topology mode requires --script-name, --description, and at least one --topic",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            declaration = _build_declaration(args)
+        except Exception as e:  # ValueError / ConfigError も catch
+            print(f"Declaration build failed: {e}", file=sys.stderr)
+            return 2
+        print(
+            f"[2/3] Topology flow (POST /oauth/topology-request → poll /oauth/token) "
+            f"script={declaration.script_name!r} topics={len(declaration.topics)} "
+            f"grants={len(declaration.grants)}",
+            file=sys.stderr,
         )
-    except InstallDeniedError as e:
-        print(f"Setup denied: {e}", file=sys.stderr)
-        return 3
-    except InstallTimeoutError as e:
-        print(f"Setup timed out: {e}", file=sys.stderr)
-        return 4
-    except InstallAuthError as e:
-        print(f"Auth error: {e}", file=sys.stderr)
-        return 5
-    except InstallError as e:
-        print(f"Setup failed: {e}", file=sys.stderr)
-        return 6
+        try:
+            result = await install_topology(
+                base_url=base_url,
+                client_id=dcr_client_id,
+                declaration=declaration,
+                on_user_code=lambda info: _print_user_code(
+                    info.user_code,
+                    info.verification_uri_complete,
+                    auto_open=not args.no_auto_open,
+                ),
+                timeout=args.timeout,
+            )
+        except InstallDeniedError as e:
+            print(f"Setup denied: {e}", file=sys.stderr)
+            return 3
+        except InstallTimeoutError as e:
+            print(f"Setup timed out: {e}", file=sys.stderr)
+            return 4
+        except InstallAuthError as e:
+            print(f"Auth error: {e}", file=sys.stderr)
+            return 5
+        except InstallError as e:
+            print(f"Setup failed: {e}", file=sys.stderr)
+            return 6
+    else:
+        print(
+            "[2/3] Device flow (POST /oauth/device/authorize → poll /oauth/token)",
+            file=sys.stderr,
+        )
+        try:
+            result = await setup_via_device_code(
+                base_url=base_url,
+                client_id=dcr_client_id,
+                scope=scope,
+                on_user_code=lambda info: _print_user_code(
+                    info.user_code,
+                    info.verification_uri_complete,
+                    auto_open=not args.no_auto_open,
+                ),
+                timeout=args.timeout,
+            )
+        except InstallDeniedError as e:
+            print(f"Setup denied: {e}", file=sys.stderr)
+            return 3
+        except InstallTimeoutError as e:
+            print(f"Setup timed out: {e}", file=sys.stderr)
+            return 4
+        except InstallAuthError as e:
+            print(f"Auth error: {e}", file=sys.stderr)
+            return 5
+        except InstallError as e:
+            print(f"Setup failed: {e}", file=sys.stderr)
+            return 6
 
     # 3) Save token bundle
     print("[3/3] Saving credentials", file=sys.stderr)
@@ -172,7 +276,12 @@ async def _async_main(args: argparse.Namespace) -> int:
         "issued_at_unix": int(result.granted_at_unix or time.time()),
         "scope": list(result.scope),
     }
-    if result.id_token:
+    # topology mode は Script + Topic binding を bundle に保存 (agent runtime config 用)
+    if isinstance(result, InstallResult):
+        bundle["script_id"] = result.script_id
+        bundle["alias_id"] = result.alias_id
+        bundle["topic_id_map"] = result.topic_id_map
+    elif result.id_token:
         bundle["id_token"] = result.id_token
     creds_path.write_text(json.dumps(bundle, indent=2))
     os.chmod(str(creds_path), 0o600)
@@ -180,7 +289,10 @@ async def _async_main(args: argparse.Namespace) -> int:
     print("", file=sys.stderr)
 
     # 4) Output MCP server config snippet (stdout)
-    print("Done. Add the following to your MCP client config (Cursor / Claude Desktop):", file=sys.stderr)
+    print(
+        "Done. Add the following to your MCP client config (Cursor / Claude Desktop):",
+        file=sys.stderr,
+    )
     print("", file=sys.stderr)
     config_snippet = {
         "mcpServers": {
@@ -204,8 +316,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="agentrux mcp setup",
         description=(
-            "Set up an MCP client connection to AgenTrux using RFC 8628 device flow "
-            "(no RAR). Outputs the MCP server config snippet for Cursor / Claude Desktop."
+            "Set up an MCP client connection to AgenTrux using OAuth 2.1 device flow. "
+            "Two modes: 'device_code' (plain, credential only) or 'topology' (RFC 9396 "
+            "RAR — declares Script + Topics + Grants in 1 step). Outputs the MCP server "
+            "config snippet for Cursor / Claude Desktop."
         ),
     )
     parser.add_argument(
@@ -219,9 +333,42 @@ def main(argv: list[str] | None = None) -> int:
         help="DCR client_name (e.g. 'Cursor on MacBook Pro')",
     )
     parser.add_argument(
+        "--setup-mode",
+        choices=["device_code", "topology"],
+        default="device_code",
+        help=(
+            "Auth path: 'device_code' (plain, default) acquires credential only; "
+            "'topology' declares Script + Topics + Grants upfront via RAR and creates "
+            "them in 1 Console approve step (mirrors OpenClaw / Dify plugin setup)."
+        ),
+    )
+    parser.add_argument(
         "--scope",
         default="topic.read,topic.write",
-        help="Comma-separated scope vocabulary (default: topic.read,topic.write)",
+        help="Comma-separated scope vocabulary, device_code mode only (default: topic.read,topic.write)",
+    )
+    parser.add_argument(
+        "--script-name",
+        help="topology mode: Script name to create (e.g. 'weather-bot')",
+    )
+    parser.add_argument(
+        "--description",
+        help="topology mode: Script description shown to operator in picker",
+    )
+    parser.add_argument(
+        "--topic",
+        action="append",
+        default=[],
+        help=(
+            "topology mode: Topic declaration 'NAME:SCOPE[:BINDING]' (e.g. "
+            "'weather-data:write' or 'shared:read:in-stream'). Repeat for multiple."
+        ),
+    )
+    parser.add_argument(
+        "--retention",
+        type=int,
+        default=86400,
+        help="topology mode: Topic retention seconds (default 86400 = 1 day)",
     )
     parser.add_argument(
         "--timeout",
