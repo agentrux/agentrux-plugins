@@ -156,18 +156,22 @@ def _latest_event():
     }
 
 
-def test_ttl_expired_reanchors_to_latest_and_clears_stale_cursor(_in_tmp):
+def test_ttl_expired_reanchors_to_oldest_retained_fifo(_in_tmp):
     sub_id = "46f8ec4a"
     ne._write_cursor(sub_id, "evt_aged_out")  # stale cursor pinned to aged-out evt
     assert ne._cursor_path(sub_id).is_file()
 
     calls = []
 
-    def fake_read(*, after_event_id, **kw):
-        calls.append(after_event_id)
+    def fake_read(*, after_event_id, order, **kw):
+        calls.append((after_event_id, order))
         if after_event_id == "evt_aged_out":
             raise HttpError(404, _ttl_body())   # catch-up hits ttl_expired
-        return [_latest_event()]                # skip-to-latest (after=None)
+        # re-anchor pull (after=None, asc): server returns oldest-retained first.
+        return [
+            {"event_id": "evt_oldest", "sequence_number": 10, "event_type": "composer.text", "payload": {"message": "old"}, "metadata": {}},
+            {"event_id": "evt_newer", "sequence_number": 11, "event_type": "composer.text", "payload": {"message": "new"}, "metadata": {}},
+        ]
 
     with patch.object(ne, "parse_subscription_id", return_value=sub_id), \
          patch.object(ne, "resolve_credentials_from_cache", return_value=("cid", "csec")), \
@@ -178,12 +182,13 @@ def test_ttl_expired_reanchors_to_latest_and_clears_stale_cursor(_in_tmp):
             payload={"topic_id": "top_x", "event_id": "evt_hint", "sequence_number": 9999},
         )
 
-    assert out.variables["event_id"] == "evt_latest"
-    # catch-up tried the stale cursor, then re-pulled latest (after=None)
-    assert calls == ["evt_aged_out", None]
-    # cursor re-anchored to the processed latest event (stale id gone)
+    # FIFO: the OLDEST retained event is processed (no skip-to-latest gap).
+    assert out.variables["event_id"] == "evt_oldest"
+    # catch-up tried the stale cursor (asc), then re-anchored from oldest (after=None, asc).
+    assert calls == [("evt_aged_out", "asc"), (None, "asc")]
+    # cursor advanced to the processed (oldest) event; stale id gone.
     data = json.loads(ne._cursor_path(sub_id).read_text())
-    assert data["last_processed_event_id"] == "evt_latest"
+    assert data["last_processed_event_id"] == "evt_oldest"
 
 
 def test_non_ttl_http_error_propagates_and_keeps_cursor(_in_tmp):

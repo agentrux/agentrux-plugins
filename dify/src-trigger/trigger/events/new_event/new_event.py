@@ -165,11 +165,10 @@ class NewEventEvent(Event):
         if cursor == hint_event_id:
             raise EventIgnoreError()
 
-        # First-hint / skip-to-latest path: cursor 無し → 最新 1 件のみ desc 取得
-        # (古い history の一斉流し込みを避け、 caller が想定する 「新着 1 件」 に寄せる)。
-        # cursor が retention 窓を超えて ttl_expired になった場合も、 stale cursor を
-        # 捨ててこの同じ path に合流する (chat エコーなので aged-out backlog の replay
-        # はしない。 openclaw gateway の reanchorExpiredCursor と同方針)。
+        # First-hint path (cursor 無し = 新規 subscription): 最新 1 件のみ desc 取得。
+        # 既存 history の一斉流し込みを避け、 caller が想定する 「新着 1 件」 に寄せる。
+        # (ttl_expired (cursor は在ったが aged-out) は別扱い: 下の except で oldest 再
+        # anchor し retained を取りこぼさず FIFO で流す。)
         def _skip_to_latest() -> list[dict]:
             return read_events(
                 base_url=base_url,
@@ -185,7 +184,8 @@ class NewEventEvent(Event):
             events = _skip_to_latest()
         else:
             # 通常 path: cursor 以降を catch up。 cursor が TTL で aged-out した場合は
-            # 404 ttl_expired が返る → stale cursor を破棄して first-hint path に合流。
+            # 404 ttl_expired が返る → stale cursor を破棄し、 取得可能な最古から
+            # FIFO で catch up し直す (oldest 再 anchor)。
             try:
                 events = read_events(
                     base_url=base_url,
@@ -199,13 +199,26 @@ class NewEventEvent(Event):
             except HttpError as e:
                 if not is_ttl_expired_cursor(e):
                     raise
+                # aged-out cursor → 取得可能な最古から asc で引き直す。 after=None + asc で
+                # サーバは oldest retained から返すので、 oldest..head の retained event を
+                # 取りこぼさず FIFO で流せる (hint は jump するので skip-to-latest にすると
+                # 中間 event が抜ける。 openclaw reanchorExpiredCursor の oldest 再 anchor
+                # を default 化した形)。 cursor は処理した event で前進する。
                 logger.warning(
-                    "cursor %s ttl-expired for sub %s; re-anchoring to latest",
+                    "cursor %s ttl-expired for sub %s; re-anchoring to oldest retained",
                     cursor, subscription_id,
                 )
                 if subscription_id:
                     _clear_cursor(subscription_id)
-                events = _skip_to_latest()
+                events = read_events(
+                    base_url=base_url,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    topic_id=topic_id,
+                    after_event_id=None,
+                    limit=CURSOR_PULL_LIMIT,
+                    order="asc",
+                )
 
         # hint の sequence_number 以下のみ処理 (それより新しいものは次回 hint で扱う)。
         # hint_seq が無い (旧 webhook 互換 path) なら filter しない。

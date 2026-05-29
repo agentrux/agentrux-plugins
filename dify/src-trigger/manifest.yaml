@@ -1,6 +1,6 @@
 author: agentrux
 name: agentrux-trigger
-version: 1.0.9
+version: 1.0.10
 type: plugin
 description:
   en_US: AgenTrux Webhook Trigger — start workflows when events arrive on AgenTrux topics
