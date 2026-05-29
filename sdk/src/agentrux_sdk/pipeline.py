@@ -14,14 +14,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from agentrux.sdk.checkpoint import CheckpointStore, InMemoryCheckpointStore
-from agentrux.sdk.errors import ValidationError
-from agentrux.sdk.gap_detector import SequenceGapDetector
-from agentrux.sdk.models import Event, PublishResult
-from agentrux.sdk.reorder_buffer import ReorderBuffer
+from agentrux_sdk.checkpoint import CheckpointStore, InMemoryCheckpointStore
+from agentrux_sdk.errors import ValidationError
+from agentrux_sdk.gap_detector import SequenceGapDetector
+from agentrux_sdk.models import Event, PublishResult
+from agentrux_sdk.reorder_buffer import ReorderBuffer
 
 if TYPE_CHECKING:
-    from agentrux.sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgentRuxClient
 
 TransformFn = Callable[[Event], Awaitable[dict | bytes | None]]
 

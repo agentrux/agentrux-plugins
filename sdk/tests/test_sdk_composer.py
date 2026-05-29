@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-from agentrux.sdk.composer import ComposerGroup, iter_composer_groups
-from agentrux.sdk.models import Event
+from agentrux_sdk.composer import ComposerGroup, iter_composer_groups
+from agentrux_sdk.models import Event
 
 
 def _evt(
@@ -160,7 +160,7 @@ async def test_flush_timeout_drains_upload_only_group(monkeypatch: pytest.Monkey
     def fake_monotonic() -> float:
         return current["t"]
 
-    monkeypatch.setattr("agentrux.sdk.composer.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("agentrux_sdk.composer.time.monotonic", fake_monotonic)
 
     async def event_source() -> AsyncIterator[Event]:
         # 1. upload を 1 件 buffer に入れる

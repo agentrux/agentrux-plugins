@@ -50,7 +50,7 @@ import sys
 import time
 import uuid
 
-from agentrux.sdk import AgentRuxClient
+from agentrux_sdk import AgentRuxClient
 
 EVENT_TYPE = "demo.request"
 POLL_INTERVAL_S = 1.0

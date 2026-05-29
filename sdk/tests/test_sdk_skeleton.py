@@ -8,8 +8,8 @@ pytestmark = pytest.mark.unit
 
 
 def test_public_api_importable() -> None:
-    """from agentrux.sdk import AgentRuxClient, SDKConfig が動く."""
-    from agentrux.sdk import AgentRuxClient, SDKConfig
+    """from agentrux_sdk import AgentRuxClient, SDKConfig が動く."""
+    from agentrux_sdk import AgentRuxClient, SDKConfig
 
     assert AgentRuxClient is not None
     assert SDKConfig is not None
@@ -17,7 +17,7 @@ def test_public_api_importable() -> None:
 
 def test_error_hierarchy() -> None:
     """全 SDK 例外が AgenTruxError を継承."""
-    from agentrux.sdk.errors import (
+    from agentrux_sdk.errors import (
         AgenTruxError,
         AuthenticationError,
         ConfigError,
@@ -52,8 +52,8 @@ def test_error_hierarchy() -> None:
 
 def test_sdkconfig_validates_endpoint() -> None:
     """endpoint が http(s) でないと ConfigError."""
-    from agentrux.sdk import SDKConfig
-    from agentrux.sdk.errors import ConfigError
+    from agentrux_sdk import SDKConfig
+    from agentrux_sdk.errors import ConfigError
 
     with pytest.raises(ConfigError, match="endpoint must be http"):
         SDKConfig(
@@ -65,8 +65,8 @@ def test_sdkconfig_validates_endpoint() -> None:
 
 def test_sdkconfig_validates_client_id_prefix() -> None:
     """client_id は crd_ prefix 必須."""
-    from agentrux.sdk import SDKConfig
-    from agentrux.sdk.errors import ConfigError
+    from agentrux_sdk import SDKConfig
+    from agentrux_sdk.errors import ConfigError
 
     with pytest.raises(ConfigError, match="crd_"):
         SDKConfig(
@@ -78,8 +78,8 @@ def test_sdkconfig_validates_client_id_prefix() -> None:
 
 def test_sdkconfig_validates_client_secret_prefix() -> None:
     """client_secret は aks_ prefix 必須 (生の secret は error message に含めない)."""
-    from agentrux.sdk import SDKConfig
-    from agentrux.sdk.errors import ConfigError
+    from agentrux_sdk import SDKConfig
+    from agentrux_sdk.errors import ConfigError
 
     with pytest.raises(ConfigError, match="aks_") as ei:
         SDKConfig(
@@ -93,8 +93,8 @@ def test_sdkconfig_validates_client_secret_prefix() -> None:
 
 def test_sdkconfig_validates_negative_lead() -> None:
     """refresh_lead_seconds < 0 は ConfigError."""
-    from agentrux.sdk import SDKConfig
-    from agentrux.sdk.errors import ConfigError
+    from agentrux_sdk import SDKConfig
+    from agentrux_sdk.errors import ConfigError
 
     with pytest.raises(ConfigError, match="refresh_lead_seconds"):
         SDKConfig(
@@ -109,7 +109,7 @@ def test_agentrux_client_construct_and_close() -> None:
     """AgentRuxClient が SDKConfig を経由して構築できる + aclose 可能."""
     import asyncio
 
-    from agentrux.sdk import AgentRuxClient
+    from agentrux_sdk import AgentRuxClient
 
     async def _run() -> None:
         client = AgentRuxClient(
@@ -129,7 +129,7 @@ def test_pipeline_legacy_function_raises_notimplemented() -> None:
     """
     import asyncio
 
-    from agentrux.sdk import pipeline
+    from agentrux_sdk import pipeline
 
     async def _check() -> None:
         with pytest.raises(NotImplementedError):

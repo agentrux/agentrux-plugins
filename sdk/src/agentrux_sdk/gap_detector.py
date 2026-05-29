@@ -5,7 +5,7 @@ SSOT: docs/04_design/sdk/sdk_design.md §6
 
 from __future__ import annotations
 
-from agentrux.sdk.errors import GapDetectedError
+from agentrux_sdk.errors import GapDetectedError
 
 
 class SequenceGapDetector:

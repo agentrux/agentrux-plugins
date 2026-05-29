@@ -5,16 +5,16 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentrux.sdk import AgentRuxClient, SDKConfig
-from agentrux.sdk.auth import Authenticator
-from agentrux.sdk.errors import (
+from agentrux_sdk import AgentRuxClient, SDKConfig
+from agentrux_sdk.auth import Authenticator
+from agentrux_sdk.errors import (
     AuthenticationError,
     CredentialRotatedError,
     RateLimitError,
     ServerError,
     TemporaryError,
 )
-from agentrux.sdk.http_client import HTTPClient
+from agentrux_sdk.http_client import HTTPClient
 
 pytestmark = pytest.mark.unit
 

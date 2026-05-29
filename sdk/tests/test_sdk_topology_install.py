@@ -19,8 +19,8 @@ from typing import Any
 import httpx
 import pytest
 
-from agentrux.sdk.errors import ConfigError
-from agentrux.sdk.topology_install import (
+from agentrux_sdk.errors import ConfigError
+from agentrux_sdk.topology_install import (
     InstallAuthError,
     InstallDeniedError,
     InstallError,
@@ -116,7 +116,7 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch):
     async def fast_sleep(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("agentrux.sdk.topology_install.asyncio.sleep", fast_sleep)
+    monkeypatch.setattr("agentrux_sdk.topology_install.asyncio.sleep", fast_sleep)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ async def test_a1_happy_path(_no_sleep: None, monkeypatch: pytest.MonkeyPatch) -
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
 
@@ -195,7 +195,7 @@ async def test_a2_async_callback_awaited(_no_sleep: None, monkeypatch: pytest.Mo
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
 
@@ -240,7 +240,7 @@ async def test_a3_authorization_pending_then_success(
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     r = await install_topology(
@@ -278,7 +278,7 @@ async def test_a4_slow_down_increases_interval(
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     r = await install_topology(
@@ -317,7 +317,7 @@ async def test_b1_access_denied(_no_sleep: None, monkeypatch: pytest.MonkeyPatch
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallDeniedError):
@@ -351,7 +351,7 @@ async def test_b2_expired_token(_no_sleep: None, monkeypatch: pytest.MonkeyPatch
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallTimeoutError):
@@ -382,7 +382,7 @@ async def test_b3_invalid_client_at_issue(monkeypatch: pytest.MonkeyPatch) -> No
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallAuthError):
@@ -413,7 +413,7 @@ async def test_b4_unsupported_version_at_issue(monkeypatch: pytest.MonkeyPatch) 
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallError):
@@ -462,7 +462,7 @@ async def test_b5_token_response_missing_authorization_details(
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallError):
@@ -583,7 +583,7 @@ async def test_c7_timeout_clamped_to_600(
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
 
@@ -596,7 +596,7 @@ async def test_c7_timeout_clamped_to_600(
         except StopIteration:
             return base + 9999
 
-    monkeypatch.setattr("agentrux.sdk.topology_install.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("agentrux_sdk.topology_install.time.monotonic", fake_monotonic)
 
     with pytest.raises(InstallTimeoutError):
         await install_topology(
@@ -792,7 +792,7 @@ async def test_v9_malformed_grant_ids_rejected(
     transport = httpx.MockTransport(handler)
     _real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "agentrux.sdk.topology_install.httpx.AsyncClient",
+        "agentrux_sdk.topology_install.httpx.AsyncClient",
         lambda *a, **kw: _real_async_client(*a, transport=transport, **kw),
     )
     with pytest.raises(InstallError):

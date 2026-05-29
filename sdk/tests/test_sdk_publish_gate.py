@@ -1,6 +1,6 @@
 """SDK publish gate (CLAUDE.md §パッケージ公開ルール).
 
-agentrux-plugins/sdk/src/agentrux/sdk/ が以下の禁止 pattern を含まないことを CI で検査する。
+agentrux-plugins/sdk/src/agentrux_sdk/ が以下の禁止 pattern を含まないことを CI で検査する。
 このリポジトリ (agentrux-plugins) は公開 SDK の SSOT。 server 本体 (api/auth/...) や
 Console/Admin plane への参照、 秘匿情報が混入していないことを gate する。
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SDK_DIR = Path(__file__).resolve().parents[1] / "src" / "agentrux" / "sdk"
+SDK_DIR = Path(__file__).resolve().parents[1] / "src" / "agentrux_sdk"
 
 
 def _iter_py_files() -> list[Path]:

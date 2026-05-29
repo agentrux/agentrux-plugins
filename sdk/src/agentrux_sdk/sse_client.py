@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from agentrux.sdk.errors import (
+from agentrux_sdk.errors import (
     AuthenticationError,
     PermissionDeniedError,
     RateLimitError,
@@ -25,11 +25,11 @@ from agentrux.sdk.errors import (
     ServerError,
     ValidationError,
 )
-from agentrux.sdk.models import Event
-from agentrux.sdk.pull_client import _map_read_error, _parse_event, read_pull
+from agentrux_sdk.models import Event
+from agentrux_sdk.pull_client import _map_read_error, _parse_event, read_pull
 
 if TYPE_CHECKING:
-    from agentrux.sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgentRuxClient
 
 
 class _Cursor:

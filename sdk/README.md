@@ -2,7 +2,7 @@
 
 Python SDK for [AgenTrux](https://github.com/agentrux/agentrux-plugins) — A2A authenticated pub/sub client.
 
-> **Status: Beta (0.3.0b1)** — OAuth 2.1 (Phase 1.9+) + cursor-based pagination + SSE hint-only consumer.
+> **Status: Beta (0.4.0b2)** — OAuth 2.1 client_credentials + cursor-based pagination + SSE hint-only consumer.
 
 ## Install
 
@@ -10,101 +10,57 @@ Python SDK for [AgenTrux](https://github.com/agentrux/agentrux-plugins) — A2A 
 pip install agentrux-sdk
 ```
 
+The import name is `agentrux_sdk` (distinct from the server-internal
+`agentrux` package, so the two never collide):
+
+```python
+from agentrux_sdk import AgentRuxClient
+```
+
 ## Quick Start
 
 ```python
-from agentrux.sdk import AgenTruxClient
+from agentrux_sdk import AgentRuxClient
 
-# 1) Confidential client (script credentials issued by Console)
-client = await AgenTruxClient.from_client_credentials(
-    "https://api.agentrux.com",
+# Confidential client (script credentials issued by Console)
+async with AgentRuxClient(
+    endpoint="https://api.agentrux.com",
     client_id="crd_<uuid>",        # script credential client_id
     client_secret="aks_<base64>",  # script credential client_secret
-)
+) as client:
+    # --- Publish ------------------------------------------------------
+    result = await client.publish(
+        topic_id="top_<uuid>",
+        payload={"msg": "Hello!"},
+        event_type="hello.world",
+    )
+    print(result.event_id, result.sequence_number)
 
-# 2) Activation code (one-shot redemption → persisted client_credentials)
-client = await AgenTruxClient.from_activation_code(
-    "https://api.agentrux.com",
-    activation_code="act_<base64>",
-    save_credentials_to="~/.agentrux/credentials.json",
-)
-
-# 3) Public client via device flow (RFC 8628 + DCR)
-dcr = await AgenTruxClient.register_dcr_client(
-    "https://api.agentrux.com", client_name="my-plugin",
-)
-auth = await AgenTruxClient.start_device_flow(
-    "https://api.agentrux.com", oauth_client_id=dcr.client_id,
-    scope="topic:abc:read topic:abc:write",
-)
-print(f"User: visit {auth.verification_uri_complete} and approve.")
-client = await AgenTruxClient.complete_device_flow(
-    "https://api.agentrux.com",
-    device_code=auth.device_code,
-    oauth_client_id=dcr.client_id,
-)
-
-# --- Publish & subscribe ----------------------------------------------
-
-await client.publish("top_<uuid>", "hello.world", {"msg": "Hello!"})
-
-async with client.subscribe("top_<uuid>") as sub:
-    async for envelope in sub:
-        print(envelope.event_type, envelope.payload)
+    # --- Read (cursor-based) ------------------------------------------
+    async for evt in client.read_pull(topic_id="top_<uuid>"):
+        print(evt.event_type, evt.payload)
 ```
 
 ## OAuth 2.1
 
-| Factory | Grant | Refresh |
-|---------|-------|---------|
-| `from_client_credentials(client_id="crd_<uuid>", client_secret=...)` | `client_credentials` | automatic re-issue (no refresh_token; the SDK re-runs the credential exchange) |
-| `from_activation_code(activation_code="act_<base64>")` | redeems AC → `client_credentials` | same as above |
-| `complete_device_flow(device_code=..., oauth_client_id="dcr_<uuid>")` | `device_code` → access+refresh | `OAuthRefreshTokenRefresher` (RFC 6749 §6) |
-| `from_access_token(access_token=..., refresh_token=..., oauth_client_id=...)` | bring-your-own | wired automatically when `oauth_client_id` is provided |
+`AgentRuxClient` uses the `client_credentials` grant. Pass the script
+credentials (`client_id="crd_<uuid>"`, `client_secret="aks_<base64>"`)
+issued by Console; the SDK obtains and re-issues access tokens
+automatically — there is no refresh token to persist.
 
-`on_token_refreshed: Callable[[TokenBundle], None]` is invoked after each
-successful refresh; use it to persist the rotated tokens.
+For interactive setup (device flow, RFC 8628) the approval step is
+delegated to the Console SPA, not the SDK. See `install_topology` /
+`device_code_setup` for the setup helpers.
 
-### `TokenBundle` dataclass
+## Read modes
 
-```python
-@dataclass(frozen=True)
-class TokenBundle:
-    access_token: str
-    refresh_token: str | None     # client_credentials path → None
-    expires_at_unix: int          # absolute unix epoch seconds
-```
+- `read_hybrid(topic_id=...)`: pull-driven, SSE hints accelerate the next pull.
+- `read_pull(topic_id=...)`: pull only; works without SSE reachability.
+- `read_sse(topic_id=...)`: server-sent events with auto-reconnect.
 
-### Persistence example
-
-```python
-def save(bundle: TokenBundle) -> None:
-    Path("~/.agentrux/credentials").expanduser().write_text(
-        f"access_token={bundle.access_token}\n"
-        f"refresh_token={bundle.refresh_token}\n"
-        f"expires_at_unix={bundle.expires_at_unix}\n"
-    )
-
-client = await AgenTruxClient.from_access_token(
-    "https://api.agentrux.com",
-    access_token=loaded.access_token,
-    refresh_token=loaded.refresh_token,
-    oauth_client_id="dcr_<uuid>",
-    on_token_refreshed=save,
-)
-```
-
-## Subscribe modes
-
-- `mode="hybrid"` (default): pull-driven, SSE hints accelerate the next pull.
-- `mode="pull"`: pull only; works without SSE reachability.
-- `mode="sse"`: alias for `hybrid` with SSE enabled (kept for naming clarity).
-
-Pass `on_resync_required=` to be notified when the server emits
-`event: resync_required` (the cursor became invalid — reset checkpoint
-and resubscribe). The hybrid consumer **always** surfaces a
-`ResyncRequiredError` to the iterator after the callback returns; the
-callback itself is for logging/metrics only.
+Each returns an async iterator of `Event` (`.event_id`, `.event_type`,
+`.payload`, `.sequence_number`). Use the last `event_id` as the `after=`
+cursor to resume.
 
 ## Used by
 

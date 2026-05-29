@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import httpx
 
-from agentrux.sdk.errors import AgenTruxError
+from agentrux_sdk.errors import AgenTruxError
 
 
 def parse_oauth_error(r: httpx.Response) -> tuple[str, str]:

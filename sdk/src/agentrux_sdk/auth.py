@@ -10,14 +10,14 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from agentrux.sdk.config import SDKConfig
-from agentrux.sdk.errors import (
+from agentrux_sdk.config import SDKConfig
+from agentrux_sdk.errors import (
     AgenTruxError,
     AuthenticationError,
     ConfigError,
     CredentialRotatedError,
 )
-from agentrux.sdk.http_client import HTTPClient
+from agentrux_sdk.http_client import HTTPClient
 
 
 class Authenticator:

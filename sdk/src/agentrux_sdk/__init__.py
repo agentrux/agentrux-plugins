@@ -7,8 +7,8 @@ CLAUDE.md §パッケージ公開ルール (絶対遵守):
 - 公開は agentrux-plugins/sdk/ 経由のみ (パッケージ名 `agentrux-sdk`)
 
 Public API (典型ユーザーが import するもの):
-  from agentrux.sdk import AgentRuxClient, SDKConfig
-  from agentrux.sdk.errors import (
+  from agentrux_sdk import AgentRuxClient, SDKConfig
+  from agentrux_sdk.errors import (
       AgenTruxError, AuthenticationError, PermissionDeniedError,
       RateLimitError, PayloadTooLargeError, ...,
   )
@@ -16,14 +16,14 @@ Public API (典型ユーザーが import するもの):
 
 from __future__ import annotations
 
-from agentrux.sdk.composer import ComposerGroup, iter_composer_groups
-from agentrux.sdk.config import SDKConfig
-from agentrux.sdk.device_code_setup import (
+from agentrux_sdk.composer import ComposerGroup, iter_composer_groups
+from agentrux_sdk.config import SDKConfig
+from agentrux_sdk.device_code_setup import (
     DeviceCodeSetupPending,
     DeviceCodeSetupResult,
     setup_via_device_code,
 )
-from agentrux.sdk.errors import (
+from agentrux_sdk.errors import (
     AgenTruxError,
     AuthenticationError,
     ConfigError,
@@ -40,8 +40,8 @@ from agentrux.sdk.errors import (
     TemporaryError,
     ValidationError,
 )
-from agentrux.sdk.facade import AgentRuxClient
-from agentrux.sdk.topology_install import (
+from agentrux_sdk.facade import AgentRuxClient
+from agentrux_sdk.topology_install import (
     InstallAbortedError,
     InstallAuthError,
     InstallDeniedError,

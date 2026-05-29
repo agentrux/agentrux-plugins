@@ -3,7 +3,7 @@
 SSOT: docs/04_design/auth/topology_request_v1.md (RFC 8628 + RFC 9396 RAR)
 
 Public API:
-    from agentrux.sdk.topology_install import (
+    from agentrux_sdk.topology_install import (
         install_topology,
         TopologyDeclaration,
         TopologyTopicSpec,
@@ -49,7 +49,7 @@ Typical usage:
 from __future__ import annotations
 
 # asyncio は本 module 内で直接使わなくなったが、 既存 test が
-# `monkeypatch.setattr("agentrux.sdk.topology_install.asyncio.sleep", ...)` の形で
+# `monkeypatch.setattr("agentrux_sdk.topology_install.asyncio.sleep", ...)` の形で
 # patch するため、 module attribute として残す (Python の `import asyncio` は global
 # asyncio module を参照、 _oauth_polling.asyncio と同一 object なので patch は波及する)。
 import asyncio  # noqa: F401 — back-compat for test monkeypatch
@@ -65,18 +65,18 @@ import httpx
 
 # Step 1a (device_code_setup_v1.md §5-1): polling / error parsing / Install* 階層を
 # 共有 module に抽出。 public API は本 module 経由 re-export で不変保持。
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     InstallAbortedError,
     InstallAuthError,
     InstallDeniedError,
     InstallError,
     InstallTimeoutError,
 )
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     parse_oauth_error as _parse_oauth_error,
 )
-from agentrux.sdk._oauth_polling import poll_device_token
-from agentrux.sdk.errors import (
+from agentrux_sdk._oauth_polling import poll_device_token
+from agentrux_sdk.errors import (
     AgenTruxError,
     ConfigError,
 )
@@ -293,7 +293,7 @@ class InstallResult:
 
 # ----------------------------------------------------------------------------
 # Error types — Step 1a で _oauth_errors.py に集約済、 ここでは re-export のみ
-# (既存 caller の `from agentrux.sdk.topology_install import InstallError` を維持)
+# (既存 caller の `from agentrux_sdk.topology_install import InstallError` を維持)
 # ----------------------------------------------------------------------------
 
 # InstallError / InstallDeniedError / InstallTimeoutError / InstallAuthError /

@@ -35,7 +35,7 @@ class SDKConfig:
     user_agent: str = "agentrux-sdk/0.1.0"
 
     def __post_init__(self) -> None:
-        from agentrux.sdk.errors import ConfigError
+        from agentrux_sdk.errors import ConfigError
 
         if not self.endpoint or not self.endpoint.startswith(("http://", "https://")):
             raise ConfigError(f"endpoint must be http(s) URL: {self.endpoint!r}")

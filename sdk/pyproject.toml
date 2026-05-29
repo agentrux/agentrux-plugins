@@ -22,14 +22,14 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentrux"]
+packages = ["src/agentrux_sdk"]
 
 [tool.hatch.build.targets.sdist]
 # Source distribution must NOT include tests/ — that would publish
 # internal test fixtures (mock servers, attack payloads, helper
 # pyramids) to PyPI, violating CLAUDE.md §publish safety rule b.
 include = [
-    "src/agentrux",
+    "src/agentrux_sdk",
     "README.md",
     "pyproject.toml",
     "LICENSE",

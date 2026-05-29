@@ -7,7 +7,7 @@ credential 取得を SDK で提供する。 backend は既存 RFC 8628 endpoint 
 + `POST /device/verify` + `POST /oauth/token grant_type=device_code`) をそのまま reuse。
 
 Public API:
-    from agentrux.sdk.device_code_setup import (
+    from agentrux_sdk.device_code_setup import (
         setup_via_device_code,
         DeviceCodeSetupResult,
         DeviceCodeSetupPending,
@@ -40,7 +40,7 @@ from typing import Any
 import httpx
 
 # Re-export Install* hierarchy (caller convenience、 device_code_setup_v1.md §3-1)
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     InstallAbortedError,
     InstallAuthError,
     InstallDeniedError,
@@ -48,14 +48,14 @@ from agentrux.sdk._oauth_errors import (
     InstallTimeoutError,
     parse_oauth_error,
 )
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     InstallAuthError as _InstallAuthError,  # noqa: F401 re-export marker
 )
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     InstallError as _InstallError,  # noqa: F401 re-export marker
 )
-from agentrux.sdk._oauth_polling import poll_device_token
-from agentrux.sdk.errors import AgenTruxError, ConfigError
+from agentrux_sdk._oauth_polling import poll_device_token
+from agentrux_sdk.errors import AgenTruxError, ConfigError
 
 # Scope vocabulary (server `is_valid_authorize_scope()` と整合、 device_code_setup_v1.md §0-4)
 _VALID_SCOPE_VOCAB: frozenset[str] = frozenset(

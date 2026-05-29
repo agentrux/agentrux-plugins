@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from agentrux.sdk.errors import TemporaryError, ValidationError
-from agentrux.sdk.models import Event
-from agentrux.sdk.pull_client import read_pull
-from agentrux.sdk.sse_client import read_sse
+from agentrux_sdk.errors import TemporaryError, ValidationError
+from agentrux_sdk.models import Event
+from agentrux_sdk.pull_client import read_pull
+from agentrux_sdk.sse_client import read_sse
 
 if TYPE_CHECKING:
-    from agentrux.sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgentRuxClient
 
 
 async def read_hybrid(

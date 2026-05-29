@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentrux.sdk import AgentRuxClient
-from agentrux.sdk.errors import (
+from agentrux_sdk import AgentRuxClient
+from agentrux_sdk.errors import (
     AuthenticationError,
     PermissionDeniedError,
     ResourceNotFoundError,

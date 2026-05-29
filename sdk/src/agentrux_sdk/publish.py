@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
-from agentrux.sdk.errors import (
+from agentrux_sdk.errors import (
     AgenTruxError,
     ConflictError,
     IdempotencyConflictError,
@@ -21,10 +21,10 @@ from agentrux.sdk.errors import (
     ResourceNotFoundError,
     ValidationError,
 )
-from agentrux.sdk.models import PublishResult
+from agentrux_sdk.models import PublishResult
 
 if TYPE_CHECKING:
-    from agentrux.sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgentRuxClient
 
 INLINE_MAX_BYTES = 256 * 1024  # spec large_payload.md §10
 

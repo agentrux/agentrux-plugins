@@ -7,8 +7,8 @@ import json
 import httpx
 import pytest
 
-from agentrux.sdk import AgentRuxClient
-from agentrux.sdk.errors import (
+from agentrux_sdk import AgentRuxClient
+from agentrux_sdk.errors import (
     AgenTruxError,
     ConflictError,
     IdempotencyConflictError,
@@ -16,7 +16,7 @@ from agentrux.sdk.errors import (
     ResourceNotFoundError,
     ValidationError,
 )
-from agentrux.sdk.publish import INLINE_MAX_BYTES
+from agentrux_sdk.publish import INLINE_MAX_BYTES
 
 pytestmark = pytest.mark.unit
 
@@ -158,7 +158,7 @@ async def test_publish_small_binary_routes_to_object_ref() -> None:
             assert content == b"\x00\x01\x02binary-not-json"
             return httpx.Response(204)
 
-    import agentrux.sdk.publish as pub_mod
+    import agentrux_sdk.publish as pub_mod
 
     monkeypatch_factory = lambda *a, **kw: _DirectMock()  # noqa: E731
 
@@ -216,7 +216,7 @@ async def test_publish_brace_prefixed_binary_routes_to_object_ref() -> None:
             assert content == not_json
             return httpx.Response(204)
 
-    import agentrux.sdk.publish as pub_mod
+    import agentrux_sdk.publish as pub_mod
 
     client = _make_client_with(handler)
     pub_mod._DirectPUTClient = lambda *a, **kw: _DirectMock()  # type: ignore[assignment]
@@ -286,7 +286,7 @@ async def test_publish_object_ref_when_payload_exceeds_inline_max(monkeypatch) -
         async def aclose(self):  # facade.aclose() 連鎖の保険 (実際には呼ばれない)
             return None
 
-    import agentrux.sdk.publish as pub_mod
+    import agentrux_sdk.publish as pub_mod
 
     def _factory(*a, **kw):
         return _DirectMock()

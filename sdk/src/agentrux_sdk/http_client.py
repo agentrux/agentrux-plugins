@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from agentrux.sdk.config import SDKConfig
-from agentrux.sdk.errors import (
+from agentrux_sdk.config import SDKConfig
+from agentrux_sdk.errors import (
     CredentialRotatedError,
     RateLimitError,
     ServerError,
@@ -20,7 +20,7 @@ from agentrux.sdk.errors import (
 )
 
 if TYPE_CHECKING:
-    from agentrux.sdk.auth import Authenticator
+    from agentrux_sdk.auth import Authenticator
 
 
 class HTTPClient:

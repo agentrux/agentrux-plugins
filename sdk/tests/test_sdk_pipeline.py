@@ -7,12 +7,12 @@ import asyncio
 import httpx
 import pytest
 
-from agentrux.sdk import AgentRuxClient
-from agentrux.sdk.checkpoint import FileCheckpointStore, InMemoryCheckpointStore
-from agentrux.sdk.errors import GapDetectedError, ValidationError
-from agentrux.sdk.gap_detector import SequenceGapDetector
-from agentrux.sdk.models import Event
-from agentrux.sdk.reorder_buffer import ReorderBuffer
+from agentrux_sdk import AgentRuxClient
+from agentrux_sdk.checkpoint import FileCheckpointStore, InMemoryCheckpointStore
+from agentrux_sdk.errors import GapDetectedError, ValidationError
+from agentrux_sdk.gap_detector import SequenceGapDetector
+from agentrux_sdk.models import Event
+from agentrux_sdk.reorder_buffer import ReorderBuffer
 
 pytestmark = pytest.mark.unit
 

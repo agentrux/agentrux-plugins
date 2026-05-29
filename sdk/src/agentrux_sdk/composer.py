@@ -47,7 +47,7 @@ from collections.abc import AsyncIterator
 
 from pydantic import ConfigDict
 
-from agentrux.sdk.models import Event, _Frozen
+from agentrux_sdk.models import Event, _Frozen
 
 
 class ComposerGroup(_Frozen):

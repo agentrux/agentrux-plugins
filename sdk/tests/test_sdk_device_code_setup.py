@@ -1,11 +1,11 @@
-"""Tests for agentrux.sdk.device_code_setup (Step 2、 plain device code RFC 8628).
+"""Tests for agentrux_sdk.device_code_setup (Step 2、 plain device code RFC 8628).
 
 SSOT: docs/04_design/auth/device_code_setup_v1.md §6-1
 品質基準: docs/01_overview/test_quality_checklist.md (a 正常 / b エラー / c 境界 / d 攻撃 / e race)
 
 各 test の前提:
-- httpx.AsyncClient を `agentrux.sdk.device_code_setup.httpx.AsyncClient` で monkeypatch
-- asyncio.sleep を高速化 (`_no_sleep` fixture、 `agentrux.sdk._oauth_polling.asyncio.sleep`)
+- httpx.AsyncClient を `agentrux_sdk.device_code_setup.httpx.AsyncClient` で monkeypatch
+- asyncio.sleep を高速化 (`_no_sleep` fixture、 `agentrux_sdk._oauth_polling.asyncio.sleep`)
 - handler ベースの mock server (request path → response status + body)
 """
 
@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from agentrux.sdk.device_code_setup import (
+from agentrux_sdk.device_code_setup import (
     DeviceCodeSetupPending,
     DeviceCodeSetupResult,
     InstallAuthError,
@@ -27,7 +27,7 @@ from agentrux.sdk.device_code_setup import (
     InstallTimeoutError,
     setup_via_device_code,
 )
-from agentrux.sdk.errors import AgenTruxError, ConfigError
+from agentrux_sdk.errors import AgenTruxError, ConfigError
 
 pytestmark = pytest.mark.asyncio
 
@@ -69,7 +69,7 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch):
     async def fast_sleep(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("agentrux.sdk._oauth_polling.asyncio.sleep", fast_sleep)
+    monkeypatch.setattr("agentrux_sdk._oauth_polling.asyncio.sleep", fast_sleep)
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch):
             return original(transport=transport, *args, **kwargs)
 
         monkeypatch.setattr(
-            "agentrux.sdk.device_code_setup.httpx.AsyncClient", factory
+            "agentrux_sdk.device_code_setup.httpx.AsyncClient", factory
         )
 
     return _patch
@@ -326,13 +326,13 @@ async def test_b5_local_timeout_exceeded(
         return start + 100000.0
 
     fake_monotonic._calls = 0  # type: ignore[attr-defined]
-    monkeypatch.setattr("agentrux.sdk._oauth_polling.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("agentrux_sdk._oauth_polling.time.monotonic", fake_monotonic)
 
     # asyncio.sleep は instant
     async def fast_sleep(_s: float) -> None:
         return None
 
-    monkeypatch.setattr("agentrux.sdk._oauth_polling.asyncio.sleep", fast_sleep)
+    monkeypatch.setattr("agentrux_sdk._oauth_polling.asyncio.sleep", fast_sleep)
 
     _patch_client(
         _make_handler(

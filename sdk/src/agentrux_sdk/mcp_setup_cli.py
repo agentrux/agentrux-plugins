@@ -9,13 +9,13 @@ MCP ⟷ plugin 認証経路整合 (ユーザ要求 2026-05-29): OpenClaw / Dify 
 metadata の `topology_request_endpoint` で discovery 可能)。
 
 Usage (plain device code、 既存):
-    $ python -m agentrux.sdk.mcp_setup_cli \\
+    $ python -m agentrux_sdk.mcp_setup_cli \\
         --base-url https://api.agentrux.com \\
         --client-name "Cursor on MacBook Pro" \\
         --scope topic.read,topic.write
 
 Usage (topology mode、 1 step で Script + Topics + Grants 宣言):
-    $ python -m agentrux.sdk.mcp_setup_cli \\
+    $ python -m agentrux_sdk.mcp_setup_cli \\
         --base-url https://api.agentrux.com \\
         --client-name "Cursor on MacBook Pro" \\
         --setup-mode topology \\
@@ -48,7 +48,7 @@ import time
 import urllib.error
 import urllib.request
 
-from agentrux.sdk.device_code_setup import (
+from agentrux_sdk.device_code_setup import (
     DeviceCodeSetupResult,
     InstallAuthError,
     InstallDeniedError,
@@ -56,7 +56,7 @@ from agentrux.sdk.device_code_setup import (
     InstallTimeoutError,
     setup_via_device_code,
 )
-from agentrux.sdk.topology_install import (
+from agentrux_sdk.topology_install import (
     InstallResult,
     TopologyDeclaration,
     TopologyGrantSpec,

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from agentrux.sdk.errors import (
+from agentrux_sdk.errors import (
     AgenTruxError,
     AuthenticationError,
     PermissionDeniedError,
@@ -21,10 +21,10 @@ from agentrux.sdk.errors import (
     ServerError,
     ValidationError,
 )
-from agentrux.sdk.models import Event
+from agentrux_sdk.models import Event
 
 if TYPE_CHECKING:
-    from agentrux.sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgentRuxClient
 
 
 def _parse_event(raw: dict[str, Any]) -> Event:

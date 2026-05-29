@@ -19,14 +19,14 @@ from typing import Any
 
 import httpx
 
-from agentrux.sdk._oauth_errors import (
+from agentrux_sdk._oauth_errors import (
     InstallAuthError,
     InstallDeniedError,
     InstallError,
     InstallTimeoutError,
     parse_oauth_error,
 )
-from agentrux.sdk.errors import AgenTruxError
+from agentrux_sdk.errors import AgenTruxError
 
 # Polling constants (RFC 8628 §3.5 + AgenTrux server 整合)
 MIN_POLL_INTERVAL = 1.0

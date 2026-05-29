@@ -9,7 +9,7 @@ Why this CLI exists (over `mcp_setup_cli.py`):
     token 発行。 user は copy-paste 不要 (CLI が browser を auto-open)。
 
 Usage:
-    $ python -m agentrux.sdk.topology_setup_cli \\
+    $ python -m agentrux_sdk.topology_setup_cli \\
         --base-url https://api.agentrux.com \\
         --client-name "Cursor on MacBook" \\
         --script-name "weather-bot" \\
@@ -40,7 +40,7 @@ import time
 import urllib.error
 import urllib.request
 
-from agentrux.sdk.topology_install import (
+from agentrux_sdk.topology_install import (
     InstallAbortedError,
     InstallAuthError,
     InstallDeniedError,

@@ -2,33 +2,25 @@
 
 ## このリポジトリの役割
 
-パブリックリポジトリ。全プラグインと SDK の公開元。
-ソースの原本はメインリポジトリ（agentrux/agentrux）の `plugins/` と `src/agentrux/sdk/`。
+パブリックリポジトリ。全プラグインと SDK の**公開元かつ唯一の原本（SSOT）**。
+
+SDK のコードはこのリポジトリ（`sdk/src/agentrux_sdk/`）にしか存在しない。
+メインリポジトリ（agentrux/agentrux）からの **rsync / コピー同期は廃止**（2026-05-29）。
+コピーは SSOT を崩すため禁止。SDK の修正は直接このリポジトリで行う。
+
+- 公開 import 名は `agentrux_sdk`（PyPI 名 `agentrux-sdk`）。
+- server 内部の `agentrux.sdk` とは別 namespace。両者は衝突しない。
+- メインリポジトリの server 本体は SDK に依存しないため、main 側に SDK のコピーは置かない。
 
 ## リリース手順
 
-### 1. 同期（メインリポジトリ → このリポジトリ）
-
-```bash
-# SDK
-rsync -av --exclude='__pycache__' \
-  /path/to/AgentRux/src/agentrux/sdk/ \
-  sdk/src/agentrux/sdk/
-
-# 各プラグイン（例: mcp）
-rsync -av --exclude='__pycache__' --exclude='node_modules' \
-  --exclude='dist' --exclude='*.egg-info' \
-  /path/to/AgentRux/plugins/<name>/ \
-  <name>/
-```
-
-### 2. バージョン更新
+### 1. バージョン更新
 
 - Python: `pyproject.toml` の `version` を更新
 - Node.js: `package.json` の `version` を更新
 - SDK を更新した場合、依存するプラグインの `agentrux-sdk>=` も更新
 
-### 3. コミット・タグ・プッシュ
+### 2. コミット・タグ・プッシュ
 
 ```bash
 git add -A && git commit -m "release: <plugin> v<version>"

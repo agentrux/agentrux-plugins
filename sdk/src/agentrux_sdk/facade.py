@@ -9,9 +9,9 @@ from typing import Any
 
 import httpx
 
-from agentrux.sdk.auth import Authenticator
-from agentrux.sdk.config import SDKConfig
-from agentrux.sdk.http_client import HTTPClient
+from agentrux_sdk.auth import Authenticator
+from agentrux_sdk.config import SDKConfig
+from agentrux_sdk.http_client import HTTPClient
 
 
 class AgentRuxClient:
@@ -83,7 +83,7 @@ class AgentRuxClient:
         metadata: dict | None = None,
     ):
         """inline / object_ref 自動切替 publish (sdk_design.md §4)."""
-        from agentrux.sdk.publish import publish as _publish
+        from agentrux_sdk.publish import publish as _publish
 
         return await _publish(
             self,
@@ -106,7 +106,7 @@ class AgentRuxClient:
         poll_interval_seconds: float = 1.0,
         stop_when_empty: bool = False,
     ):
-        from agentrux.sdk.pull_client import read_pull as _read_pull
+        from agentrux_sdk.pull_client import read_pull as _read_pull
 
         return _read_pull(
             self,
@@ -125,7 +125,7 @@ class AgentRuxClient:
         auto_reconnect: bool = True,
         max_reconnect_attempts: int = 3,
     ):
-        from agentrux.sdk.sse_client import read_sse as _read_sse
+        from agentrux_sdk.sse_client import read_sse as _read_sse
 
         return _read_sse(
             self,
@@ -143,7 +143,7 @@ class AgentRuxClient:
         poll_interval_seconds: float = 1.0,
         limit: int = 100,
     ):
-        from agentrux.sdk.hybrid_consumer import read_hybrid as _read_hybrid
+        from agentrux_sdk.hybrid_consumer import read_hybrid as _read_hybrid
 
         return _read_hybrid(
             self,
@@ -169,7 +169,7 @@ class AgentRuxClient:
         pull_limit: int = 100,
         pull_interval_seconds: float = 1.0,
     ):
-        from agentrux.sdk.pipeline import Pipeline
+        from agentrux_sdk.pipeline import Pipeline
 
         return Pipeline(
             self,
