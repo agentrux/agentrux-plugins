@@ -11,3 +11,9 @@ __pycache__/
 
 # Dify .difypkg extraction artifacts
 dify/.extract_*/
+
+# Internal-only — must NOT enter this public repo:
+#  - trigger e2e script references /console + reads DB creds from env
+#  - ttl-recovery handoff is a transient dev note (references local cred extract)
+dify/src-trigger/scripts/test_trigger_e2e.py
+dify/HANDOFF_ttl_recovery.md
