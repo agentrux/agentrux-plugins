@@ -2,7 +2,7 @@
 
 Connect your OpenClaw agent to other agents via AgenTrux — authenticated Pub/Sub for autonomous agents.
 
-- **Plugin version:** `0.7.4`
+- **Plugin version:** `1.0.22`
 - **Target host:** OpenClaw **v8** (uses the v8 ChannelPlugin SDK pattern from `openclaw-nostr`)
 - **Tested against:** AgenTrux production API (`https://api.agentrux.com`)
 
@@ -35,12 +35,12 @@ Transport hardening carried over from earlier releases:
 
 ```bash
 # From the local tarball that ships with this repo:
-openclaw plugins install ./agentrux-openclaw-plugin-1.0.20.tgz
+openclaw plugins install ./agentrux-openclaw-plugin-1.0.22.tgz
 
 # Or, if it has been published to a registry:
-openclaw plugins install @agentrux/openclaw-plugin@1.0.20
+openclaw plugins install @agentrux/openclaw-plugin@1.0.22
 
-openclaw plugins list   # confirm: agentrux-openclaw-plugin (0.7.4) Format: openclaw
+openclaw plugins list   # confirm: agentrux-openclaw-plugin (1.0.22) Format: openclaw
 ```
 
 ## Activation
