@@ -10,6 +10,7 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -161,53 +162,60 @@ def test_validate_rejects_non_https_base_url():
         )
 
 
-def test_validate_rejects_raw_uuid_client_id():
+# Baseline A (device_code_setup_v1.md §4-2): credentials_for_provider takes a
+# single-use Activation Code (act_). The plugin redeems it into a Script
+# credential (crd_/aks_) and then probes grant_type=client_credentials.
+
+def test_validate_redeems_activation_code():
     p = agentrux_tools.AgentruxToolsProvider()
-    with pytest.raises(
-        agentrux_tools.ToolProviderCredentialValidationError, match="script_"
-    ):
+    with patch(
+        "provider.agentrux_api.validate_activation",
+        return_value=("crd_x", "aks_y"),
+    ) as mv, patch(
+        "provider.agentrux_api._client_credentials_token",
+        return_value="aat_tok",
+    ) as mt:
         p._validate_credentials(
             {
                 "base_url": "https://api.agentrux.com",
-                "client_id": "550e8400-e29b-41d4-a716-446655440000",
-                "client_secret": "s",
+                "activation_code": "act_abc",
             }
         )
+    mv.assert_called_once_with("https://api.agentrux.com", "act_abc")
+    mt.assert_called_once_with("https://api.agentrux.com", "crd_x", "aks_y")
 
 
-def test_validate_calls_token_endpoint():
+def test_validate_raises_on_bad_activation_code():
     p = agentrux_tools.AgentruxToolsProvider()
-    fake = MagicMock()
-    fake.status_code = 200
-    with patch("provider.agentrux_tools.httpx.post", return_value=fake) as m:
-        p._validate_credentials(
-            {
-                "base_url": "https://api.agentrux.com",
-                "client_id": "script_abc",
-                "client_secret": "secret123",
-            }
-        )
-    args, kwargs = m.call_args
-    assert args[0] == "https://api.agentrux.com/oauth/token"
-    assert kwargs["data"]["grant_type"] == "client_credentials"
-    assert kwargs["data"]["client_id"] == "script_abc"
-
-
-def test_validate_raises_on_bad_credentials():
-    p = agentrux_tools.AgentruxToolsProvider()
-    fake = MagicMock()
-    fake.status_code = 401
-    with patch("provider.agentrux_tools.httpx.post", return_value=fake):
+    req = httpx.Request(
+        "POST", "https://api.agentrux.com/auth/redeem-activation-code"
+    )
+    err = httpx.HTTPStatusError(
+        "consumed", request=req, response=httpx.Response(409, request=req)
+    )
+    with patch("provider.agentrux_api.validate_activation", side_effect=err):
         with pytest.raises(
-            agentrux_tools.ToolProviderCredentialValidationError, match="401"
+            agentrux_tools.ToolProviderCredentialValidationError,
+            match="Activation failed",
         ):
             p._validate_credentials(
                 {
                     "base_url": "https://api.agentrux.com",
-                    "client_id": "script_abc",
-                    "client_secret": "wrong",
+                    "activation_code": "act_dead",
                 }
             )
+
+
+def test_validate_requires_activation_or_oauth():
+    p = agentrux_tools.AgentruxToolsProvider()
+    with patch(
+        "provider.agentrux_api.resolve_credentials_from_cache", return_value=None
+    ):
+        with pytest.raises(
+            agentrux_tools.ToolProviderCredentialValidationError,
+            match="Activation Code",
+        ):
+            p._validate_credentials({"base_url": "https://api.agentrux.com"})
 
 
 # ---------------------------------------------------------------------------

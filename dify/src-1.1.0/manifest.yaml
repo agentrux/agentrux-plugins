@@ -1,10 +1,10 @@
 author: agentrux
 name: agentrux-tools
-version: 1.1.0
+version: 1.2.0
 type: plugin
 description:
-  en_US: AgenTrux PubSub Tools — publish, read, and upload events to AgenTrux topics (OAuth 2.1)
-  ja_JP: AgenTrux PubSub ツール — トピックへのイベント発行・読み取り・アップロード（OAuth 2.1）
+  en_US: AgenTrux PubSub Tools — publish, read, and upload events to AgenTrux topics (Activation Code or OAuth 2.1 + PKCE)
+  ja_JP: AgenTrux PubSub ツール — トピックへのイベント発行・読み取り・アップロード（Activation Code または OAuth 2.1 + PKCE）
 label:
   en_US: AgenTrux Tools
   ja_JP: AgenTrux ツール

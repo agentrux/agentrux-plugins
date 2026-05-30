@@ -12,12 +12,20 @@ identity:
     - utilities
 
 # ---------------------------------------------------------------------------
-# Auth: dual support
-#   - oauth_schema       — Authorization Code + PKCE (Dify 1.10+, recommended)
-#   - credentials_for_provider — client_credentials fallback (manual paste)
+# Auth: dual support (matches OpenClaw/trigger; SSOT device_code_setup_v1.md §4-2)
+#   - oauth_schema       — Authorization Code + PKCE (Dify 1.10+, recommended
+#                          when the Dify host has a public OAuth callback)
+#   - credentials_for_provider — Activation Code (act_): a single-use code from
+#                          the AgenTrux Console is redeemed once via
+#                          POST /auth/redeem-activation-code into a Script
+#                          credential (crd_/aks_), which the runtime then uses
+#                          for grant_type=client_credentials. 1-click setup with
+#                          no public callback (good for self-hosted Dify).
 #
 # Dify allows BOTH to be present; users pick whichever flow matches their
 # Dify deployment (Cloud vs self-hosted-without-public-callback).
+# device_code / topology flow are intentionally NOT offered for Dify
+# (see device_code_setup_v1.md §4-2): tools = activation_code | auth_code+PKCE.
 # ---------------------------------------------------------------------------
 
 oauth_schema:
@@ -72,26 +80,17 @@ credentials_for_provider:
     placeholder:
       en_US: https://api.agentrux.com
     default: https://api.agentrux.com
-  client_id:
-    type: text-input
-    required: true
-    label:
-      en_US: Script Client ID
-      ja_JP: Script クライアント ID
-    help:
-      en_US: "Script credential ID from AgenTrux Console (must start with 'script_'). Used for grant_type=client_credentials."
-      ja_JP: "AgenTrux Console で発行した Script credential ID（必ず 'script_' で始まる）。grant_type=client_credentials で使用。"
-    placeholder:
-      en_US: "script_..."
-  client_secret:
+  activation_code:
     type: secret-input
     required: true
     label:
-      en_US: Script Client Secret
-      ja_JP: Script クライアントシークレット
+      en_US: Activation Code
+      ja_JP: Activation Code
     help:
-      en_US: "Script credential secret paired with the client_id above."
-      ja_JP: "上記 client_id とペアの Script credential secret。"
+      en_US: "Single-use Activation Code from the AgenTrux Console (Scripts -> Issue Activation Code; starts with 'act_'). Redeemed once via POST /auth/redeem-activation-code into a Script credential; re-saving the same code is idempotent via a local 0600 cache."
+      ja_JP: "AgenTrux Console で発行した1回限りの Activation Code（Scripts → Issue Activation Code、'act_' で始まる）。POST /auth/redeem-activation-code で Script credential に交換され、同じコードの再保存はローカル 0600 キャッシュで冪等。"
+    placeholder:
+      en_US: "act_..."
 
 tools:
   - tools/publish.yaml

@@ -125,36 +125,47 @@ class AgentruxToolsProvider(ToolProvider):
                 "base_url must use HTTPS (or http://localhost for development)"
             )
 
+        from .agentrux_api import _client_credentials_token, validate_activation
+
+        # Activation Code path: redeem act_ -> Script credential (crd_/aks_),
+        # idempotent via the activation-code fingerprint cache, then probe
+        # client_credentials.
+        activation_code = credentials.get("activation_code") or ""
+        if activation_code:
+            try:
+                client_id, client_secret = validate_activation(base_url, activation_code)
+                _client_credentials_token(base_url, client_id, client_secret)
+            except httpx.HTTPStatusError as e:
+                raise ToolProviderCredentialValidationError(
+                    f"Activation failed (HTTP {e.response.status_code}): the code may be "
+                    "expired, already consumed, or the Script suspended. Issue a fresh "
+                    "Activation Code in the AgenTrux Console."
+                ) from e
+            except httpx.HTTPError as e:
+                raise ToolProviderCredentialValidationError(
+                    f"AgenTrux API unreachable: {e}"
+                ) from e
+            return
+
+        # Back-compat: an explicit Script credential (crd_/aks_) supplied
+        # directly in this credential set. (No base_url-only cache fallback —
+        # that could validate against another Script's credential on a shared
+        # API host; Codex impl review Q3.)
         client_id = credentials.get("client_id") or ""
         client_secret = credentials.get("client_secret") or ""
-        if not client_id or not client_secret:
-            raise ToolProviderCredentialValidationError(
-                "client_id and client_secret are required (use OAuth flow or paste Script credential)"
-            )
-        if not client_id.startswith("script_"):
-            raise ToolProviderCredentialValidationError(
-                "client_id must start with 'script_' (paste a Script credential ID, not a raw UUID)"
-            )
+        if client_id and client_secret:
+            try:
+                _client_credentials_token(base_url, client_id, client_secret)
+            except httpx.HTTPError as e:
+                raise ToolProviderCredentialValidationError(
+                    f"Script credential rejected: {e}"
+                ) from e
+            return
 
-        # Probe token endpoint with grant_type=client_credentials.
-        try:
-            resp = httpx.post(
-                f"{base_url}/oauth/token",
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
-                timeout=10,
-            )
-        except httpx.HTTPError as e:
-            raise ToolProviderCredentialValidationError(
-                f"AgenTrux API unreachable: {e}"
-            ) from e
-        if resp.status_code != 200:
-            raise ToolProviderCredentialValidationError(
-                f"AgenTrux rejected client_credentials (HTTP {resp.status_code})"
-            )
+        raise ToolProviderCredentialValidationError(
+            "Provide an Activation Code (act_...) from the AgenTrux Console, "
+            "or connect via the OAuth flow."
+        )
 
     # -----------------------------------------------------------------
     # OAuth Authorization Code + PKCE path (oauth_schema)

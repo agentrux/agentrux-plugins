@@ -23,8 +23,10 @@ from provider import agentrux_api  # noqa: E402
 @pytest.fixture(autouse=True)
 def _clear_cache():
     agentrux_api._cc_token_cache.clear()
+    agentrux_api.ACTIVATED_CACHE.clear()
     yield
     agentrux_api._cc_token_cache.clear()
+    agentrux_api.ACTIVATED_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +83,48 @@ def test_resolve_raises_when_no_credentials():
         agentrux_api.resolve_access_token(
             {"base_url": "https://api.agentrux.com"}
         )
+
+
+# ---------------------------------------------------------------------------
+# Activation Code path (baseline A): act_ -> crd_/aks_ -> client_credentials
+# ---------------------------------------------------------------------------
+
+def test_resolve_via_activation_code():
+    fake = MagicMock()
+    fake.json.return_value = {"access_token": "ey.cc", "expires_in": 3600}
+    with patch(
+        "provider.agentrux_api.validate_activation",
+        return_value=("crd_x", "aks_y"),
+    ) as mv, patch("provider.agentrux_api.httpx.post", return_value=fake) as mp:
+        base_url, token = agentrux_api.resolve_access_token(
+            {
+                "base_url": "https://api.agentrux.com",
+                "activation_code": "act_abc",
+            }
+        )
+    assert token == "ey.cc"
+    mv.assert_called_once_with("https://api.agentrux.com", "act_abc")
+    # client_credentials uses the redeemed crd_/aks_
+    assert mp.call_args.kwargs["data"]["client_id"] == "crd_x"
+    assert mp.call_args.kwargs["data"]["grant_type"] == "client_credentials"
+
+
+def test_validate_activation_idempotent_via_disk_cache(tmp_path):
+    cache_file = tmp_path / ".agentrux_activated.json"
+    with patch.object(agentrux_api, "_DISK_CACHE_FILE", cache_file), patch(
+        "provider.agentrux_api.activate", return_value=("crd_x", "aks_y")
+    ) as ma:
+        first = agentrux_api.validate_activation(
+            "https://api.agentrux.com", "act_abc"
+        )
+        # Drop the in-process fast path so the 2nd call must consult disk.
+        agentrux_api.ACTIVATED_CACHE.clear()
+        second = agentrux_api.validate_activation(
+            "https://api.agentrux.com", "act_abc"
+        )
+    assert first == second == ("crd_x", "aks_y")
+    assert ma.call_count == 1, "same AC must redeem once (disk-cache idempotent)"
+    assert cache_file.exists()
 
 
 # ---------------------------------------------------------------------------
