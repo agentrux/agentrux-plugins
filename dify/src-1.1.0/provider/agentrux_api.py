@@ -13,14 +13,28 @@ human-readable message.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import logging
+import os
+import pathlib
+import tempfile
 import time
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 # Per-process cache for client_credentials JWTs.
 # key = "<base_url>::<client_id>"  ->  (access_token, expires_at_epoch)
 _cc_token_cache: dict[str, tuple[str, float]] = {}
+
+# Activation Code -> Script credential cache (mirrors the trigger plugin so the
+# same act_ -> crd_/aks_ -> client_credentials flow works in tools).
+# key = "<base_url>" -> (client_id, client_secret); disk file is 0600 and keyed
+# by sha256(activation_code) so re-saving the same code is idempotent.
+ACTIVATED_CACHE: dict[str, tuple[str, str]] = {}
+_DISK_CACHE_FILE = pathlib.Path(".agentrux_activated.json")
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +55,113 @@ def _is_url_allowed(base_url: str) -> bool:
 # Token resolution
 # ---------------------------------------------------------------------------
 
+def _ac_fingerprint(activation_code: str) -> str:
+    return hashlib.sha256(activation_code.encode("utf-8")).hexdigest()
+
+
+def _load_disk_cache() -> dict[str, dict]:
+    try:
+        if not _DISK_CACHE_FILE.is_file():
+            return {}
+        return json.loads(_DISK_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 — cache is best-effort
+        logger.warning("activation disk cache read failed: %s", e)
+        return {}
+
+
+def _save_disk_cache(cache: dict[str, dict]) -> None:
+    try:
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8",
+            dir=str(_DISK_CACHE_FILE.parent) or ".",
+            prefix=".agentrux_activated.", suffix=".tmp", delete=False,
+        )
+        try:
+            json.dump(cache, tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        finally:
+            tmp.close()
+        os.chmod(tmp.name, 0o600)
+        os.replace(tmp.name, _DISK_CACHE_FILE)
+    except Exception as e:  # noqa: BLE001 — cache is best-effort
+        logger.warning("activation disk cache write failed: %s", e)
+
+
+def activate(base_url: str, activation_code: str) -> tuple[str, str]:
+    """Redeem a single-use Activation Code (act_) into a Script credential.
+
+    Returns (client_id=crd_<uuid>, client_secret=aks_<plain>). The server
+    consumes the code; aks_ is returned exactly once.
+    """
+    resp = httpx.post(
+        f"{base_url}/auth/redeem-activation-code",
+        json={"code": activation_code},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    return body["client_id"], body["client_secret"]
+
+
+def resolve_credentials_from_cache(base_url: str) -> tuple[str, str] | None:
+    """Return cached (client_id, client_secret) for base_url, or None.
+
+    Lets the runtime work off a previously-redeemed credential without
+    re-providing the (now-consumed) Activation Code.
+    """
+    cached = ACTIVATED_CACHE.get(base_url)
+    if cached:
+        return cached
+    for entry in _load_disk_cache().values():
+        if entry.get("base_url") == base_url and entry.get("client_id"):
+            pair = (entry["client_id"], entry["client_secret"])
+            ACTIVATED_CACHE[base_url] = pair
+            return pair
+    return None
+
+
+def validate_activation(base_url: str, activation_code: str) -> tuple[str, str]:
+    """Redeem the Activation Code, idempotent via fingerprint cache.
+
+    Re-saving the same code resolves from cache instead of hitting the
+    single-use server endpoint again.
+    """
+    fp = _ac_fingerprint(activation_code)
+    cache = _load_disk_cache()
+    entry = cache.get(fp)
+    if entry and entry.get("base_url") == base_url and entry.get("client_id"):
+        pair = (entry["client_id"], entry["client_secret"])
+        ACTIVATED_CACHE[base_url] = pair
+        return pair
+    cid, secret = activate(base_url, activation_code)
+    cache[fp] = {
+        "base_url": base_url,
+        "client_id": cid,
+        "client_secret": secret,
+        "activated_at": int(time.time()),
+    }
+    _save_disk_cache(cache)
+    ACTIVATED_CACHE[base_url] = (cid, secret)
+    return cid, secret
+
+
 def resolve_access_token(creds: dict) -> tuple[str, str]:
     """Resolve (base_url, access_token) from runtime.credentials.
 
     Order:
-      1. If access_token is present (OAuth path), return it.
-      2. Else fall back to client_credentials grant.
+      1. OAuth path: Dify supplies (and auto-refreshes) access_token.
+      2. Activation Code path: redeem act_ -> Script credential (crd_/aks_),
+         idempotent via the activation-code fingerprint cache, then
+         client_credentials.
+      3. Back-compat: an explicit Script credential (crd_/aks_) supplied
+         directly in this credential set.
+
+    Note: there is intentionally NO "resolve any cached credential for this
+    base_url" fallback — that could hand a tool the wrong Script's credential
+    when several Scripts share one API host (Codex impl review Q2). The AC
+    fingerprint cache (validate_activation) keys per-code, so the primary path
+    stays correct without it.
     """
     base_url = creds.get("base_url") or "https://api.agentrux.com"
     if not _is_url_allowed(base_url):
@@ -56,13 +171,19 @@ def resolve_access_token(creds: dict) -> tuple[str, str]:
     if access_token:
         return base_url, access_token
 
+    activation_code = creds.get("activation_code") or ""
+    if activation_code:
+        client_id, client_secret = validate_activation(base_url, activation_code)
+        return base_url, _client_credentials_token(base_url, client_id, client_secret)
+
     client_id = creds.get("client_id") or ""
     client_secret = creds.get("client_secret") or ""
-    if not client_id or not client_secret:
-        raise ValueError(
-            "No credentials available — connect via OAuth or paste Script client_id/client_secret"
-        )
-    return base_url, _client_credentials_token(base_url, client_id, client_secret)
+    if client_id and client_secret:
+        return base_url, _client_credentials_token(base_url, client_id, client_secret)
+
+    raise ValueError(
+        "No credentials available — connect via OAuth or provide an Activation Code (act_...)"
+    )
 
 
 def _client_credentials_token(base_url: str, client_id: str, client_secret: str) -> str:
