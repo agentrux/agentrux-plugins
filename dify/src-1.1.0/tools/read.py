@@ -14,7 +14,7 @@ class ReadTool(Tool):
         if parameter != "topic_id":
             return []
         return [
-            ToolParameterOption(label=o["label"], value=o["value"])
+            ToolParameterOption(label={"en_US": o["label"], "ja_JP": o["label"]}, value=o["value"])
             for o in build_topic_options(self.runtime.credentials, {"read"})
         ]
 
