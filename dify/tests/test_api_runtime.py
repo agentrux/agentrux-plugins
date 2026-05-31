@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 # Ensure dify_plugin stubs exist (re-use the install from oauth tests).
@@ -141,33 +142,81 @@ def _jwt(scope):
     return f"{header}.{payload}.sig"
 
 
-def test_build_topic_options_filters_by_action():
+def _offline_get():
+    """Patch GET /topics to fail, forcing the JWT-scope fallback path."""
+    return patch(
+        "provider.agentrux_api.httpx.get",
+        side_effect=httpx.HTTPError("offline"),
+    )
+
+
+def test_build_topic_options_primary_uses_get_topics_names():
+    # GET /topics returns named items (server-sorted); build options preserve
+    # order and filter by action, labelling with the human-readable name.
+    fake = MagicMock()
+    fake.status_code = 200
+    fake.json.return_value = {
+        "items": [
+            {"topic_id": "top_a", "name": "alerts", "display_name": "Alerts",
+             "actions": ["read"]},
+            {"topic_id": "top_b", "name": "orders", "display_name": "Orders",
+             "actions": ["read", "write"]},
+        ]
+    }
+    creds = {"base_url": "https://api.agentrux.com", "access_token": "ey.x"}
+    with patch("provider.agentrux_api.httpx.get", return_value=fake) as mg:
+        options = agentrux_api.build_topic_options(creds, {"write"})
+    # only orders is write-granted; label is the display_name, value is top_id
+    assert options == [{"label": "Orders", "value": "top_b"}]
+    assert mg.call_args.args[0] == "https://api.agentrux.com/topics"
+    assert mg.call_args.kwargs["headers"]["Authorization"] == "Bearer ey.x"
+
+
+def test_build_topic_options_malformed_200_falls_back_to_scope():
+    # 200 but the body is not valid JSON / wrong shape -> must fall back to the
+    # JWT-scope path instead of raising (Codex impl review Q4).
+    bad = MagicMock()
+    bad.status_code = 200
+    bad.json.side_effect = ValueError("not json")
+    creds = {
+        "base_url": "https://api.agentrux.com",
+        "access_token": _jwt(["topic:t1:write"]),
+    }
+    with patch("provider.agentrux_api.httpx.get", return_value=bad):
+        options = agentrux_api.build_topic_options(creds, {"write"})
+    assert options == [{"label": "t1 (write)", "value": "t1"}]
+
+
+def test_build_topic_options_fallback_filters_by_action():
     creds = {
         "base_url": "https://api.agentrux.com",
         "access_token": _jwt(
             ["topic:t1:read", "topic:t1:write", "topic:t2:read", "other:x"]
         ),
     }
-    options = agentrux_api.build_topic_options(creds, {"write"})
+    with _offline_get():
+        options = agentrux_api.build_topic_options(creds, {"write"})
     assert options == [{"label": "t1 (write)", "value": "t1"}]
 
 
-def test_build_topic_options_handles_string_scope():
+def test_build_topic_options_fallback_handles_string_scope():
     creds = {
         "base_url": "https://api.agentrux.com",
         "access_token": _jwt("topic:t1:read topic:t2:write"),
     }
-    options = agentrux_api.build_topic_options(creds, {"read", "write"})
+    with _offline_get():
+        options = agentrux_api.build_topic_options(creds, {"read", "write"})
     values = sorted(o["value"] for o in options)
     assert values == ["t1", "t2"]
 
 
-def test_build_topic_options_dedupes():
+def test_build_topic_options_fallback_dedupes():
     creds = {
         "base_url": "https://api.agentrux.com",
         "access_token": _jwt(["topic:t1:read", "topic:t1:read"]),
     }
-    assert len(agentrux_api.build_topic_options(creds, {"read"})) == 1
+    with _offline_get():
+        assert len(agentrux_api.build_topic_options(creds, {"read"})) == 1
 
 
 def test_build_topic_options_swallows_errors():
