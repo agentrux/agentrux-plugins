@@ -34,7 +34,12 @@ _cc_token_cache: dict[str, tuple[str, float]] = {}
 # key = "<base_url>" -> (client_id, client_secret); disk file is 0600 and keyed
 # by sha256(activation_code) so re-saving the same code is idempotent.
 ACTIVATED_CACHE: dict[str, tuple[str, str]] = {}
-_DISK_CACHE_FILE = pathlib.Path(".agentrux_activated.json")
+# Absolute path next to this module, NOT the CWD: the Dify plugin daemon runs
+# several subprocesses with different working directories (e.g. CWD=/app vs the
+# install dir), so a relative path makes one subprocess write the cache while
+# another can't find it — the dynamic-select dropdown then re-redeems a
+# single-use code, fails, and silently returns no options.
+_DISK_CACHE_FILE = pathlib.Path(__file__).resolve().parent / ".agentrux_activated.json"
 
 
 # ---------------------------------------------------------------------------
