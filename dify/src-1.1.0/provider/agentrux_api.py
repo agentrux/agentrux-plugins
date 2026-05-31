@@ -240,17 +240,43 @@ def _decode_jwt_scope(token: str) -> list[str]:
 
 
 def build_topic_options(creds: dict, allowed_actions: set[str]) -> list[dict]:
-    """Build dynamic-select options from JWT scope claim.
+    """Build dynamic-select options for the topic selector.
 
-    Scope entries shaped like 'topic:<topic_id>:<action>' are extracted.
+    Primary: GET /topics returns the caller's accessible topics with
+    human-readable names (server-sorted by name). Fallback (older server or
+    error): derive id-only options from the JWT scope claim.
     """
     try:
         base_url, token = resolve_access_token(creds)
     except Exception:
         return []
 
+    # Primary: GET /topics (names). Preserve the server-side (name, id) order.
+    try:
+        resp = httpx.get(
+            f"{base_url}/topics",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            options: list[dict] = []
+            for item in resp.json().get("items", []):
+                if not (set(item.get("actions", [])) & allowed_actions):
+                    continue
+                topic_id = item.get("topic_id")
+                if not topic_id:
+                    continue
+                label = item.get("display_name") or item.get("name") or topic_id
+                options.append({"label": label, "value": topic_id})
+            return options
+    except Exception:
+        # Network error, non-JSON body, or unexpected shape -> fall back to
+        # deriving id-only options from the JWT scope claim.
+        pass
+
+    # Fallback: id-only options derived from the JWT scope claim.
     seen: set[str] = set()
-    options: list[dict] = []
+    options = []
     for entry in _decode_jwt_scope(token):
         if not entry.startswith("topic:"):
             continue
