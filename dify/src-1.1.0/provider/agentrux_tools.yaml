@@ -61,14 +61,29 @@ oauth_schema:
   credentials_schema:
     - name: base_url
       type: text-input
+      label:
+        en_US: AgenTrux API URL
+        ja_JP: AgenTrux API URL
     - name: access_token
       type: secret-input
+      label:
+        en_US: Access Token
+        ja_JP: アクセストークン
     - name: refresh_token
       type: secret-input
+      label:
+        en_US: Refresh Token
+        ja_JP: リフレッシュトークン
     - name: expires_at
       type: text-input
+      label:
+        en_US: Expires At
+        ja_JP: 有効期限
     - name: scope
       type: text-input
+      label:
+        en_US: Scope
+        ja_JP: スコープ
 
 credentials_for_provider:
   base_url:
