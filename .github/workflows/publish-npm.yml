@@ -2,12 +2,14 @@
 #
 # Tag format: <plugin>-v<version>
 #   openclaw-v0.14.5
+#   n8n-v0.4.0
 #
 # Requires secret: NPM_TOKEN
 #
-# 2026-05-02: n8n / flowise plugins were retired. Their npm packages
-# (@agentrux/n8n-plugin, flowise-node-agentrux) are deprecated on the
-# registry; this workflow no longer triggers for those tags.
+# 2026-05-02: flowise plugin retired (flowise-node-agentrux deprecated on npm).
+# 2026-06-01: n8n revived as @agentrux/n8n-nodes-agentrux (current API). The old
+#   @agentrux/n8n-plugin name stays deprecated; the new community node publishes
+#   from n8n/ on tag n8n-v<version>. The job is generic (plugin = tag prefix).
 
 name: Publish to npm
 
@@ -15,6 +17,7 @@ on:
   push:
     tags:
       - 'openclaw-v*'
+      - 'n8n-v*'
 
 permissions:
   contents: read

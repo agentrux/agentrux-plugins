@@ -447,3 +447,96 @@ export async function publishEvent(
 	}
 	return agentruxApiRequest(ctx, 'POST', creds, `/topics/${top}/events`, { body });
 }
+
+// ---------------------------------------------------------------------------
+// Payload (binary file) upload / download via presigned URLs
+// ---------------------------------------------------------------------------
+
+export interface CreatePayloadResult {
+	payload_object_id: string;
+	presigned_put_url: string;
+	required_headers: Record<string, string>;
+}
+
+/**
+ * Reserve a payload object: POST /topics/{top}/payloads -> presigned PUT URL.
+ * The caller then PUTs the bytes to presigned_put_url with required_headers
+ * (the S3/MinIO SigV4 signature is computed over those headers).
+ */
+export async function createPayload(
+	ctx: HttpHelper,
+	creds: ResolvedCredentials,
+	topicId: string,
+	params: { sizeBytes: number; contentType?: string; checksumSha256?: string },
+): Promise<CreatePayloadResult> {
+	const top = ensureTopPrefix(topicId);
+	const body: Record<string, unknown> = { size_bytes: params.sizeBytes };
+	if (params.contentType) body.content_type = params.contentType;
+	if (params.checksumSha256) body.checksum_sha256 = params.checksumSha256;
+	const res = await agentruxApiRequest(ctx, 'POST', creds, `/topics/${top}/payloads`, { body });
+	return {
+		payload_object_id: String(res?.payload_object_id ?? ''),
+		presigned_put_url: String(res?.presigned_put_url ?? ''),
+		required_headers: (res?.required_headers as Record<string, string>) ?? {},
+	};
+}
+
+/**
+ * PUT bytes to a presigned S3/MinIO URL. The URL is sent verbatim with ONLY the
+ * server-provided required_headers — deliberately no Authorization Bearer and no
+ * extra Content-Type/User-Agent — so the SigV4 signature still matches.
+ */
+export async function uploadToPresigned(
+	ctx: HttpHelper,
+	presignedUrl: string,
+	buffer: Buffer,
+	requiredHeaders: Record<string, string>,
+): Promise<void> {
+	const resp = (await ctx.helpers.httpRequest({
+		method: 'PUT',
+		url: presignedUrl,
+		body: buffer,
+		headers: { ...(requiredHeaders ?? {}) },
+		returnFullResponse: true,
+		ignoreHttpStatusErrors: true,
+	})) as { statusCode?: number; body?: unknown };
+	const status = resp.statusCode ?? 0;
+	if (status < 200 || status >= 300) {
+		throw new NodeOperationError(
+			ctx.getNode() as never,
+			`Presigned upload failed (${status}): ${String(resp.body).slice(0, 300)}`,
+		);
+	}
+}
+
+/** GET /topics/{top}/payloads/{pob} -> presigned GET URL + metadata. */
+export async function getPayloadDownloadUrl(
+	ctx: HttpHelper,
+	creds: ResolvedCredentials,
+	topicId: string,
+	payloadObjectId: string,
+): Promise<{ presignedGetUrl: string; contentType?: string; sizeBytes?: number }> {
+	const top = ensureTopPrefix(topicId);
+	const res = await agentruxApiRequest(ctx, 'GET', creds, `/topics/${top}/payloads/${payloadObjectId}`);
+	return {
+		presignedGetUrl: String(res?.presigned_get_url ?? res?.download_url ?? ''),
+		contentType: res?.content_type,
+		sizeBytes: typeof res?.size_bytes === 'number' ? res.size_bytes : undefined,
+	};
+}
+
+/** GET bytes from a presigned S3/MinIO URL (no Bearer; URL carries the auth). */
+export async function downloadFromPresigned(ctx: HttpHelper, presignedUrl: string): Promise<Buffer> {
+	const resp = (await ctx.helpers.httpRequest({
+		method: 'GET',
+		url: presignedUrl,
+		encoding: 'arraybuffer',
+		returnFullResponse: true,
+		ignoreHttpStatusErrors: true,
+	})) as { statusCode?: number; body?: unknown };
+	const status = resp.statusCode ?? 0;
+	if (status < 200 || status >= 300) {
+		throw new NodeOperationError(ctx.getNode() as never, `Presigned download failed (${status})`);
+	}
+	return Buffer.from(resp.body as ArrayBuffer);
+}

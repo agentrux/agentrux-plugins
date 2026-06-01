@@ -1,0 +1,49 @@
+{
+  "name": "AgenTrux Echo",
+  "nodes": [
+    {
+      "parameters": {
+        "topicId": "top_REPLACE_ME",
+        "excludeSelf": false,
+        "pollIntervalSeconds": 30
+      },
+      "id": "agentrux-trigger",
+      "name": "AgenTrux Trigger",
+      "type": "@agentrux/n8n-nodes-agentrux.agenTruxTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $input.item.json;\nconst p = ev.payload || {};\nconst msg = p.message ?? p.text ?? p.content ?? '';\n// Skip our own echoes to break the loop (same topic in/out).\nif (!msg || String(msg).includes('[n8n echo]')) { return []; }\nreturn [{ json: { reply: String(msg) + ' [n8n echo]', in_reply_to: ev.event_id || '' } }];"
+      },
+      "id": "echo-append",
+      "name": "Echo Append",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "operation": "publishEvent",
+        "topicId": "top_REPLACE_ME",
+        "eventType": "n8n.echo",
+        "payload": "={{ JSON.stringify({ message: $json.reply, in_reply_to: $json.in_reply_to }) }}"
+      },
+      "id": "agentrux-publish",
+      "name": "AgenTrux Publish",
+      "type": "@agentrux/n8n-nodes-agentrux.agenTrux",
+      "typeVersion": 1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "AgenTrux Trigger": {
+      "main": [[{ "node": "Echo Append", "type": "main", "index": 0 }]]
+    },
+    "Echo Append": {
+      "main": [[{ "node": "AgenTrux Publish", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

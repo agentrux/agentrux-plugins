@@ -54,6 +54,7 @@ GitHub Actions がタグを検知して自動で PyPI / npm に公開する。
 | sdk/ | `agentrux-sdk` | `sdk-v` |
 | agent-sdk/ | `agentrux-agent-tools` | `agent-sdk-v` |
 | openclaw/ | `@agentrux/openclaw-plugin` | `openclaw-v` |
+| n8n/ | `@agentrux/n8n-nodes-agentrux` | `n8n-v` |
 
 ### 廃止プラグイン (2026-05-02)
 
@@ -61,7 +62,7 @@ GitHub Actions がタグを検知して自動で PyPI / npm に公開する。
 
 | パッケージ | レジストリでの状態 |
 |---|---|
-| `@agentrux/n8n-plugin` | npm: deprecate |
+| `@agentrux/n8n-plugin` | npm: deprecate（旧名。後継は新名 `@agentrux/n8n-nodes-agentrux` = 上表、2026-06-01 復活） |
 | `flowise-node-agentrux` | npm: deprecate |
 | `langflow-agentrux` | PyPI: yank（全 versions） |
 | `temporal-agentrux` | PyPI: yank（全 versions） |

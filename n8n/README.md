@@ -2,10 +2,10 @@
 
 n8n community node for [AgenTrux](https://github.com/agentrux/agentrux-plugins) — authenticated pub/sub for AI agents.
 
-This package adds three things to n8n:
+This package adds to n8n:
 
 - **AgenTrux API credential** — connect with a one-time **Activation Code**.
-- **AgenTrux** node — **Publish** / **Read** events on a Topic, plus **List Topics**.
+- **AgenTrux** node — **Publish** / **Read** events, **List Topics**, and **Upload** / **Download** binary payloads on a Topic.
 - **AgenTrux Trigger** node — wake your workflow on new events using **SSE hints + Pull**.
 
 ## How it connects (Activation Code)
@@ -25,27 +25,35 @@ exchanged for a short-lived access token (`aat_<JWT>`) via the OAuth 2.1
 
 ## Install
 
-This is a community node package. From a checkout:
+### Standard (npm — recommended)
+
+In n8n: **Settings → Community Nodes → Install**, then enter the package name:
+
+```
+@agentrux/n8n-nodes-agentrux
+```
+
+n8n fetches, builds, and registers the node from npm. This is the reproducible
+path most users should take.
+
+### From source (development / before an npm release)
 
 ```bash
 cd agentrux-plugins/n8n
 npm install
 npm run build
-```
-
-Then make it visible to n8n (pick one):
-
-```bash
-# Symlink into n8n's custom extensions
 mkdir -p ~/.n8n/custom
 ln -s "$(pwd)" ~/.n8n/custom/n8n-nodes-agentrux
-
-# …or via Docker
-#   volumes: ./agentrux-plugins/n8n:/home/node/custom-nodes/n8n-nodes-agentrux
-#   environment: N8N_CUSTOM_EXTENSIONS=/home/node/custom-nodes/n8n-nodes-agentrux
+# …or via Docker: mount the folder and set
+#   N8N_CUSTOM_EXTENSIONS=/home/node/custom-nodes/n8n-nodes-agentrux
 ```
 
 Restart n8n; the nodes appear as **AgenTrux** and **AgenTrux Trigger**.
+
+> Nodes installed from npm register under the package name
+> (`@agentrux/n8n-nodes-agentrux.*`); nodes loaded from `~/.n8n/custom` register
+> under the `CUSTOM.*` namespace. This only matters when importing a template
+> JSON that hard-codes the node type — see [`templates/`](templates/).
 
 ## Quick start
 
@@ -67,6 +75,8 @@ Restart n8n; the nodes appear as **AgenTrux** and **AgenTrux Trigger**.
 | Publish Event | Publish `{ event_type, payload }` (or object-ref via *Payload Object ID*) to a topic |
 | Read Events | Cursor-paginated pull (`after`, `limit`, `order`, type filter, exclude-self) |
 | List Topics | List topics this credential can reach |
+| Upload Payload | Upload an input binary file (presigned PUT) → returns `payload_object_id` |
+| Download Payload | Download a payload object (presigned GET) → output binary file |
 
 ### AgenTrux Trigger (SSE hint + Pull)
 
@@ -87,6 +97,14 @@ AgenTrux Topic│                                     ├─► Pull GET /events
   (at-least-once; gaps across restarts are accepted by design).
 - **Safety poll** (configurable) covers missed hints / dropped streams.
 - **Exclude Own Events** drops events this credential published itself.
+
+## File handling & history patterns
+
+- **Receive a file → pass it on**: `AgenTrux Trigger → AgenTrux (Download Payload, Payload Object ID = ={{ $json.payload_object_id }}) → …`. The downloaded file arrives as a standard n8n binary object.
+- **Send a file you received**: `… (binary) → AgenTrux (Upload Payload) → AgenTrux (Publish Event, Additional Fields → Payload Object ID = ={{ $json.payload_object_id }})` (object-ref mode).
+- **Replay past logs**: **Read Events** with *Order = asc* and an empty *After Cursor* starts at the oldest retained event; feed the returned `next.after` back into *After Cursor* to page through the whole history (the cursor is the `event_id`).
+
+Import-ready examples live in [`templates/`](templates/) (start with `echo.workflow.json`).
 
 ## Develop
 

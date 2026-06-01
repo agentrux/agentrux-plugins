@@ -9,12 +9,16 @@
 
 import { AgenTruxApi } from '../credentials/AgenTruxApi.credentials';
 import {
+	createPayload,
+	downloadFromPresigned,
 	ensureTopPrefix,
+	getPayloadDownloadUrl,
 	isTtlExpired,
-	oldestAvailable,
 	listTopics,
-	readEvents,
+	oldestAvailable,
 	publishEvent,
+	readEvents,
+	uploadToPresigned,
 	type HttpHelper,
 	type ResolvedCredentials,
 } from '../transport/apiRequest';
@@ -196,5 +200,127 @@ describe('listTopics', () => {
 		});
 		const topics = await listTopics(ctx, CREDS);
 		expect(topics).toEqual([{ topic_id: 'top_a', name: 'Alpha', actions: ['read', 'write'] }]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Payload upload / download (presigned) — a 正常 / b エラー / c 境界 / d 攻撃
+// ---------------------------------------------------------------------------
+
+const PRESIGN_PUT = 'https://s3.example.com/bucket/pob_1?X-Amz-Signature=put';
+const PRESIGN_GET = 'https://s3.example.com/bucket/pob_1?X-Amz-Signature=get';
+
+function withToken(handler: (opts: any) => { statusCode: number; body: any }) {
+	return (opts: any) => {
+		if (String(opts.url).endsWith('/oauth/token')) {
+			return { statusCode: 200, body: { access_token: 'aat_x', expires_in: 600 } };
+		}
+		return handler(opts);
+	};
+}
+
+describe('createPayload', () => {
+	test('a: sends size_bytes + content_type + checksum, returns presigned info', async () => {
+		const { ctx, calls } = mockCtx(
+			withToken(() => ({
+				statusCode: 200,
+				body: {
+					payload_object_id: 'pob_1',
+					presigned_put_url: PRESIGN_PUT,
+					required_headers: { 'x-amz-checksum-sha256': 'CHK', 'content-type': 'text/plain' },
+				},
+			})),
+		);
+		const res = await createPayload(ctx, CREDS, 'top_t', {
+			sizeBytes: 5,
+			contentType: 'text/plain',
+			checksumSha256: 'CHK',
+		});
+		expect(res.payload_object_id).toBe('pob_1');
+		expect(res.presigned_put_url).toBe(PRESIGN_PUT);
+		expect(res.required_headers).toMatchObject({ 'x-amz-checksum-sha256': 'CHK' });
+		const create = calls.find((c) => c.method === 'POST' && String(c.url).includes('/payloads'));
+		expect(create.body).toMatchObject({ size_bytes: 5, content_type: 'text/plain', checksum_sha256: 'CHK' });
+		expect(String(create.url)).toContain('/topics/top_t/payloads');
+	});
+
+	test('b: server 4xx throws', async () => {
+		const { ctx } = mockCtx(withToken(() => ({ statusCode: 413, body: { detail: 'too large' } })));
+		await expect(createPayload(ctx, CREDS, 'top_t', { sizeBytes: 9e9 })).rejects.toThrow();
+	});
+
+	test('c: zero-byte file still sends size_bytes=0', async () => {
+		const { ctx, calls } = mockCtx(
+			withToken(() => ({ statusCode: 200, body: { payload_object_id: 'pob_0', presigned_put_url: PRESIGN_PUT } })),
+		);
+		await createPayload(ctx, CREDS, 'top_t', { sizeBytes: 0 });
+		const create = calls.find((c) => String(c.url).includes('/payloads'));
+		expect(create.body.size_bytes).toBe(0);
+		expect(create.body.content_type).toBeUndefined();
+	});
+});
+
+describe('uploadToPresigned', () => {
+	test('a/d: PUTs the buffer with only required headers — no Bearer / no api host leak', async () => {
+		const { ctx, calls } = mockCtx(() => ({ statusCode: 200, body: '' }));
+		const buf = Buffer.from('hello');
+		await uploadToPresigned(ctx, PRESIGN_PUT, buf, { 'x-amz-checksum-sha256': 'CHK' });
+		const put = calls.find((c) => c.method === 'PUT');
+		expect(String(put.url)).toBe(PRESIGN_PUT);
+		expect(put.body).toBe(buf);
+		expect(put.headers).toMatchObject({ 'x-amz-checksum-sha256': 'CHK' });
+		expect(put.headers.Authorization).toBeUndefined();
+		expect(String(put.url)).not.toContain('api.agentrux.com');
+	});
+
+	test('b: non-2xx from S3 throws', async () => {
+		const { ctx } = mockCtx(() => ({ statusCode: 403, body: 'SignatureDoesNotMatch' }));
+		await expect(uploadToPresigned(ctx, PRESIGN_PUT, Buffer.from('x'), {})).rejects.toThrow(/403/);
+	});
+});
+
+describe('getPayloadDownloadUrl', () => {
+	test('a: returns presigned GET url + metadata', async () => {
+		const { ctx, calls } = mockCtx(
+			withToken(() => ({
+				statusCode: 200,
+				body: { presigned_get_url: PRESIGN_GET, content_type: 'image/png', size_bytes: 42 },
+			})),
+		);
+		const info = await getPayloadDownloadUrl(ctx, CREDS, 'top_t', 'pob_1');
+		expect(info.presignedGetUrl).toBe(PRESIGN_GET);
+		expect(info.contentType).toBe('image/png');
+		expect(info.sizeBytes).toBe(42);
+		expect(calls.some((c) => c.method === 'GET' && String(c.url).includes('/payloads/pob_1'))).toBe(true);
+	});
+
+	test('c: missing presigned_get_url -> empty string', async () => {
+		const { ctx } = mockCtx(withToken(() => ({ statusCode: 200, body: { content_type: 'text/plain' } })));
+		const info = await getPayloadDownloadUrl(ctx, CREDS, 'top_t', 'pob_1');
+		expect(info.presignedGetUrl).toBe('');
+	});
+
+	test('b: 404 throws', async () => {
+		const { ctx } = mockCtx(withToken(() => ({ statusCode: 404, body: { detail: 'not found' } })));
+		await expect(getPayloadDownloadUrl(ctx, CREDS, 'top_t', 'pob_x')).rejects.toThrow();
+	});
+});
+
+describe('downloadFromPresigned', () => {
+	test('a/d: GETs bytes (arraybuffer) — no Bearer / no api host leak', async () => {
+		const payload = Buffer.from('filebytes');
+		const { ctx, calls } = mockCtx(() => ({ statusCode: 200, body: payload }));
+		const out = await downloadFromPresigned(ctx, PRESIGN_GET);
+		expect(out.toString()).toBe('filebytes');
+		const get = calls.find((c) => c.method === 'GET');
+		expect(get.encoding).toBe('arraybuffer');
+		expect(String(get.url)).toBe(PRESIGN_GET);
+		expect(get.headers?.Authorization).toBeUndefined();
+		expect(String(get.url)).not.toContain('api.agentrux.com');
+	});
+
+	test('b: non-2xx throws', async () => {
+		const { ctx } = mockCtx(() => ({ statusCode: 403, body: 'AccessDenied' }));
+		await expect(downloadFromPresigned(ctx, PRESIGN_GET)).rejects.toThrow(/403/);
 	});
 });

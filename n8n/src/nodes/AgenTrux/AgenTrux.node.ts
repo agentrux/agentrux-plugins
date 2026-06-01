@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 import {
 	IDataObject,
 	IExecuteFunctions,
@@ -6,13 +8,18 @@ import {
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
+	NodeOperationError,
 } from 'n8n-workflow';
 
 import {
+	createPayload,
+	downloadFromPresigned,
+	getPayloadDownloadUrl,
 	listTopics,
 	publishEvent,
 	readEvents,
 	resolveCredentials,
+	uploadToPresigned,
 	type HttpHelper,
 } from '../../transport/apiRequest';
 
@@ -56,6 +63,8 @@ export class AgenTrux implements INodeType {
 					{ name: 'Publish Event', value: 'publishEvent', description: 'Publish an event to a topic', action: 'Publish an event' },
 					{ name: 'Read Events', value: 'readEvents', description: 'Read events from a topic (cursor pagination)', action: 'Read events' },
 					{ name: 'List Topics', value: 'listTopics', description: 'List topics this credential can reach', action: 'List topics' },
+					{ name: 'Upload Payload', value: 'uploadPayload', description: 'Upload a binary file to a topic (presigned PUT). Returns payload_object_id for object-ref publish', action: 'Upload a payload' },
+					{ name: 'Download Payload', value: 'downloadPayload', description: 'Download a payload object as binary (presigned GET)', action: 'Download a payload' },
 				],
 				default: 'publishEvent',
 			},
@@ -68,7 +77,7 @@ export class AgenTrux implements INodeType {
 				typeOptions: { loadOptionsMethod: 'getTopics' },
 				default: '',
 				required: true,
-				displayOptions: { show: { operation: ['publishEvent', 'readEvents'] } },
+				displayOptions: { show: { operation: ['publishEvent', 'readEvents', 'uploadPayload', 'downloadPayload'] } },
 				description:
 					'Topic to use. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
@@ -165,6 +174,45 @@ export class AgenTrux implements INodeType {
 				displayOptions: { show: { operation: ['readEvents'] } },
 				description: 'Whether to drop events this credential published itself (server-side echo filter)',
 			},
+
+			// ── Upload Payload ──
+			{
+				displayName: 'Input Binary Field',
+				name: 'binaryProperty',
+				type: 'string',
+				default: 'data',
+				required: true,
+				displayOptions: { show: { operation: ['uploadPayload'] } },
+				description: 'Name of the binary property on the input item holding the file to upload',
+			},
+			{
+				displayName: 'Content Type Override',
+				name: 'contentType',
+				type: 'string',
+				default: '',
+				displayOptions: { show: { operation: ['uploadPayload'] } },
+				description: "MIME type to send (defaults to the binary field's mimeType)",
+			},
+
+			// ── Download Payload ──
+			{
+				displayName: 'Payload Object ID',
+				name: 'payloadObjectId',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'pob_...',
+				displayOptions: { show: { operation: ['downloadPayload'] } },
+				description: "ID of the payload object to download (e.g. from an event's payload_object_id)",
+			},
+			{
+				displayName: 'Output Binary Field',
+				name: 'binaryPropertyOut',
+				type: 'string',
+				default: 'data',
+				displayOptions: { show: { operation: ['downloadPayload'] } },
+				description: 'Name of the binary property to write the downloaded file to',
+			},
 		],
 	};
 
@@ -244,6 +292,51 @@ export class AgenTrux implements INodeType {
 							pairedItem: { item: i },
 						});
 					}
+				} else if (operation === 'uploadPayload') {
+					const binaryProperty = this.getNodeParameter('binaryProperty', i) as string;
+					const ctOverride = this.getNodeParameter('contentType', i, '') as string;
+					const binMeta = this.helpers.assertBinaryData(i, binaryProperty);
+					const buffer = await this.helpers.getBinaryDataBuffer(i, binaryProperty);
+					const contentType = ctOverride || binMeta.mimeType || 'application/octet-stream';
+					const checksum = createHash('sha256').update(buffer).digest('base64');
+					const created = await createPayload(this as unknown as HttpHelper, creds, topicId, {
+						sizeBytes: buffer.length,
+						contentType,
+						checksumSha256: checksum,
+					});
+					await uploadToPresigned(
+						this as unknown as HttpHelper,
+						created.presigned_put_url,
+						buffer,
+						created.required_headers,
+					);
+					returnData.push({
+						json: {
+							payload_object_id: created.payload_object_id,
+							content_type: contentType,
+							size: buffer.length,
+							file_name: binMeta.fileName,
+						},
+						pairedItem: { item: i },
+					});
+				} else if (operation === 'downloadPayload') {
+					const payloadObjectId = this.getNodeParameter('payloadObjectId', i) as string;
+					const binaryPropertyOut = this.getNodeParameter('binaryPropertyOut', i, 'data') as string;
+					const info = await getPayloadDownloadUrl(this as unknown as HttpHelper, creds, topicId, payloadObjectId);
+					if (!info.presignedGetUrl) {
+						throw new NodeOperationError(this.getNode(), `No download URL for ${payloadObjectId}`);
+					}
+					const buffer = await downloadFromPresigned(this as unknown as HttpHelper, info.presignedGetUrl);
+					const binary = await this.helpers.prepareBinaryData(buffer, undefined, info.contentType);
+					returnData.push({
+						json: {
+							payload_object_id: payloadObjectId,
+							content_type: info.contentType,
+							size: buffer.length,
+						},
+						binary: { [binaryPropertyOut]: binary },
+						pairedItem: { item: i },
+					});
 				}
 			} catch (error: any) {
 				if (this.continueOnFail()) {
