@@ -116,4 +116,4 @@ npm test           # jest
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE). Full license text: <https://opensource.org/license/mit>.

@@ -70,4 +70,4 @@ This SDK is the shared transport layer for all AgenTrux Python plugins:
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE). Full license text: <https://opensource.org/license/mit>.

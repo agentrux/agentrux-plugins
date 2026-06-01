@@ -160,3 +160,7 @@ async def generic_agent(llm_call, user_prompt: str):
 | `AGENTRUX_SCRIPT_ID` | Script identifier |
 | `AGENTRUX_CLIENT_SECRET` | Client Secret |
 | `AGENTRUX_INVITE_CODE` | Optional invite code for cross-Alias (cross-account) access |
+
+## License
+
+MIT — see [LICENSE](./LICENSE). Full license text: <https://opensource.org/license/mit>.

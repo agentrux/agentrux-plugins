@@ -252,3 +252,7 @@ curl -X POST "https://api.agentrux.com/topics/{commandTopicId}/events" \
 - `execPolicy`: exec tool disabled by default, opt-in with command allowlist
 - Activation code never written to `openclaw.json` — redeemed once by `agentrux_activate`, then forgotten
 - Credentials file is mode 0600
+
+## License
+
+MIT — see [LICENSE](./LICENSE). Full license text: <https://opensource.org/license/mit>.
