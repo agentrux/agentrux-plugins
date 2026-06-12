@@ -24,7 +24,7 @@ from agentrux_sdk.errors import (
 from agentrux_sdk.models import PublishResult
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 INLINE_MAX_BYTES = 256 * 1024  # spec large_payload.md §10
 
@@ -81,7 +81,7 @@ def _map_publish_error(r: httpx.Response) -> Exception:
 
 
 async def publish(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     payload: Any,
@@ -92,7 +92,7 @@ async def publish(
     """size に応じて inline / object_ref を自動選択して publish.
 
     Args:
-      client: AgentRuxClient (auth + http を提供)
+      client: AgenTruxClient (auth + http を提供)
       topic_id: "top_<uuid>" prefix 付き
       payload: bytes / dict / list / scalar JSON (str/int/float/bool/None) / Pydantic BaseModel
       event_type: optional (default None = サーバー側 "user.event")
@@ -130,7 +130,7 @@ async def publish(
 
 
 async def _publish_inline(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     raw: bytes,
@@ -166,7 +166,7 @@ async def _publish_inline(
 
 
 async def _publish_object_ref(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     raw: bytes,

@@ -16,11 +16,11 @@ from agentrux_sdk.pull_client import read_pull
 from agentrux_sdk.sse_client import read_sse
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 
 async def read_hybrid(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     last_event_id: str | None = None,

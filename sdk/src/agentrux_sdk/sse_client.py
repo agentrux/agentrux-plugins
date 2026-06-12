@@ -29,7 +29,7 @@ from agentrux_sdk.models import Event
 from agentrux_sdk.pull_client import _map_read_error, _parse_event, read_pull
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 
 class _Cursor:
@@ -50,7 +50,7 @@ class _Cursor:
 
 
 async def read_sse(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     last_event_id: str | None = None,
@@ -91,7 +91,7 @@ async def read_sse(
 
 
 async def _stream_once(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     cursor: _Cursor,
@@ -160,7 +160,7 @@ async def _stream_once(
             return
 
 
-async def _hydrate(client: AgentRuxClient, *, topic_id: str, event_id: str) -> Event | None:
+async def _hydrate(client: AgenTruxClient, *, topic_id: str, event_id: str) -> Event | None:
     """hint の event_id で本体を取得。
 
     404 は **TTL 失効 (reason=ttl_expired) のときだけ** skip して None を返す。それ以外の 404

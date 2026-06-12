@@ -1,4 +1,4 @@
-"""AgentRuxClient — L1 high-level facade.
+"""AgenTruxClient — L1 high-level facade.
 
 SSOT: docs/04_design/sdk/sdk_design.md §1 設計原則 (5) 3 階層 Public API
 """
@@ -14,12 +14,12 @@ from agentrux_sdk.config import SDKConfig
 from agentrux_sdk.http_client import HTTPClient
 
 
-class AgentRuxClient:
+class AgenTruxClient:
     """典型的な script ユーザーが import する 1 つの class.
 
     使い方:
-      async with AgentRuxClient(
-          endpoint="https://api.agentrux.io",
+      async with AgenTruxClient(
+          endpoint="https://api.agentrux.com",
           client_id="crd_...",
           client_secret="aks_...",
       ) as client:
@@ -190,7 +190,7 @@ class AgentRuxClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> AgentRuxClient:
+    async def __aenter__(self) -> AgenTruxClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

@@ -7,7 +7,7 @@ import asyncio
 import httpx
 import pytest
 
-from agentrux_sdk import AgentRuxClient
+from agentrux_sdk import AgenTruxClient
 from agentrux_sdk.checkpoint import FileCheckpointStore, InMemoryCheckpointStore
 from agentrux_sdk.errors import GapDetectedError, ValidationError
 from agentrux_sdk.gap_detector import SequenceGapDetector
@@ -134,8 +134,8 @@ async def test_reorder_buffer_duplicate_ignored() -> None:
 # ============================================================================
 
 
-def _make_client_for_pipeline(handler: callable) -> AgentRuxClient:
-    client = AgentRuxClient(
+def _make_client_for_pipeline(handler: callable) -> AgenTruxClient:
+    client = AgenTruxClient(
         endpoint="https://api.example.com",
         client_id="crd_pipe",
         client_secret="aks_pipe",

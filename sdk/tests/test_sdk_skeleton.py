@@ -8,10 +8,10 @@ pytestmark = pytest.mark.unit
 
 
 def test_public_api_importable() -> None:
-    """from agentrux_sdk import AgentRuxClient, SDKConfig が動く."""
-    from agentrux_sdk import AgentRuxClient, SDKConfig
+    """from agentrux_sdk import AgenTruxClient, SDKConfig が動く."""
+    from agentrux_sdk import AgenTruxClient, SDKConfig
 
-    assert AgentRuxClient is not None
+    assert AgenTruxClient is not None
     assert SDKConfig is not None
 
 
@@ -106,13 +106,13 @@ def test_sdkconfig_validates_negative_lead() -> None:
 
 
 def test_agentrux_client_construct_and_close() -> None:
-    """AgentRuxClient が SDKConfig を経由して構築できる + aclose 可能."""
+    """AgenTruxClient が SDKConfig を経由して構築できる + aclose 可能."""
     import asyncio
 
-    from agentrux_sdk import AgentRuxClient
+    from agentrux_sdk import AgenTruxClient
 
     async def _run() -> None:
-        client = AgentRuxClient(
+        client = AgenTruxClient(
             endpoint="https://api.example.com",
             client_id="crd_xxx",
             client_secret="aks_xxx",

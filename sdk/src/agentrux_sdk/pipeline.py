@@ -21,7 +21,7 @@ from agentrux_sdk.models import Event, PublishResult
 from agentrux_sdk.reorder_buffer import ReorderBuffer
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 TransformFn = Callable[[Event], Awaitable[dict | bytes | None]]
 
@@ -31,7 +31,7 @@ class Pipeline:
 
     def __init__(
         self,
-        client: AgentRuxClient,
+        client: AgenTruxClient,
         *,
         source_topic: str,
         sink_topic: str,

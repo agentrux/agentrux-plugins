@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentrux_sdk import AgentRuxClient
+from agentrux_sdk import AgenTruxClient
 from agentrux_sdk.errors import (
     AuthenticationError,
     PermissionDeniedError,
@@ -16,8 +16,8 @@ from agentrux_sdk.errors import (
 pytestmark = pytest.mark.unit
 
 
-def _make_client_with(handler: callable) -> AgentRuxClient:
-    client = AgentRuxClient(
+def _make_client_with(handler: callable) -> AgenTruxClient:
+    client = AgenTruxClient(
         endpoint="https://api.example.com",
         client_id="crd_r",
         client_secret="aks_r",
