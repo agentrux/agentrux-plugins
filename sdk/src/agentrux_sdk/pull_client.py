@@ -35,7 +35,7 @@ from agentrux_sdk.errors import (
 from agentrux_sdk.models import Event
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 
 def _parse_event(raw: dict[str, Any]) -> Event:
@@ -124,7 +124,7 @@ def _map_read_error(status: int, body_text: str) -> Exception:
 
 
 async def read_pull(
-    client: AgentRuxClient,
+    client: AgenTruxClient,
     *,
     topic_id: str,
     after: str | None = None,

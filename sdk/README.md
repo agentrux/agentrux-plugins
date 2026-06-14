@@ -14,16 +14,16 @@ The import name is `agentrux_sdk` (distinct from the server-internal
 `agentrux` package, so the two never collide):
 
 ```python
-from agentrux_sdk import AgentRuxClient
+from agentrux_sdk import AgenTruxClient
 ```
 
 ## Quick Start
 
 ```python
-from agentrux_sdk import AgentRuxClient
+from agentrux_sdk import AgenTruxClient
 
 # Confidential client (script credentials issued by Console)
-async with AgentRuxClient(
+async with AgenTruxClient(
     endpoint="https://api.agentrux.com",
     client_id="crd_<uuid>",        # script credential client_id
     client_secret="aks_<base64>",  # script credential client_secret
@@ -43,7 +43,7 @@ async with AgentRuxClient(
 
 ## OAuth 2.1
 
-`AgentRuxClient` uses the `client_credentials` grant. Pass the script
+`AgenTruxClient` uses the `client_credentials` grant. Pass the script
 credentials (`client_id="crd_<uuid>"`, `client_secret="aks_<base64>"`)
 issued by Console; the SDK obtains and re-issues access tokens
 automatically — there is no refresh token to persist.

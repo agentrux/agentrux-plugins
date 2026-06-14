@@ -13,7 +13,8 @@ import json
 
 import httpx
 import pytest
-from agentrux_sdk import AgentRuxClient
+
+from agentrux_sdk import AgenTruxClient
 from agentrux_sdk.checkpoint import FileCheckpointStore, InMemoryCheckpointStore
 from agentrux_sdk.dedupe import EventIdDedupe
 from agentrux_sdk.errors import RetentionMissError, ValidationError
@@ -93,8 +94,8 @@ def test_dedupe_multiple_topics_independent() -> None:
 # ============================================================================
 
 
-def _make_client_for_pipeline(handler: callable) -> AgentRuxClient:
-    client = AgentRuxClient(
+def _make_client_for_pipeline(handler: callable) -> AgenTruxClient:
+    client = AgenTruxClient(
         endpoint="https://api.example.com",
         client_id="crd_pipe",
         client_secret="aks_pipe",

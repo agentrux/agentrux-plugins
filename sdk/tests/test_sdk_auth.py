@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from agentrux_sdk import AgentRuxClient, SDKConfig
+
+from agentrux_sdk import AgenTruxClient, SDKConfig
 from agentrux_sdk.auth import Authenticator
 from agentrux_sdk.errors import (
     AuthenticationError,
@@ -312,7 +313,7 @@ async def test_no_retry_for_4xx_other_than_429() -> None:
 
 
 # ============================================================================
-# AgentRuxClient end-to-end (constructor → request → aclose)
+# AgenTruxClient end-to-end (constructor → request → aclose)
 # ============================================================================
 
 
@@ -330,7 +331,7 @@ async def test_agentrux_client_end_to_end_authenticated_request() -> None:
         assert req.headers["authorization"] == "Bearer aat_e2e"
         return httpx.Response(200, json={"ok": True})
 
-    client = AgentRuxClient(
+    client = AgenTruxClient(
         endpoint="https://api.example.com",
         client_id="crd_e2e",
         client_secret="aks_e2e",

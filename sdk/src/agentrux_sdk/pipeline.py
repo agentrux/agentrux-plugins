@@ -26,7 +26,7 @@ from agentrux_sdk.errors import ValidationError
 from agentrux_sdk.models import Event, PublishResult
 
 if TYPE_CHECKING:
-    from agentrux_sdk.facade import AgentRuxClient
+    from agentrux_sdk.facade import AgenTruxClient
 
 TransformFn = Callable[[Event], Awaitable[dict | bytes | None]]
 
@@ -36,7 +36,7 @@ class Pipeline:
 
     def __init__(
         self,
-        client: AgentRuxClient,
+        client: AgenTruxClient,
         *,
         source_topic: str,
         sink_topic: str,
