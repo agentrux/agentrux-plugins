@@ -1,0 +1,48 @@
+identity:
+  name: agentrux_get_topics
+  author: agentrux
+  label:
+    en_US: List Topics
+    ja_JP: トピック一覧
+
+description:
+  human:
+    en_US: Lists AgenTrux topics the current credential can access, with their ids, names and granted actions
+    ja_JP: 現在の認証情報でアクセスできる AgenTrux トピックを id・名前・権限付きで一覧します
+  llm: List the AgenTrux PubSub topics this credential can access. Returns an array of {topic_id, name, actions}. ALWAYS call this first to discover the topic_id (a UUID) to pass to agentrux_publish / agentrux_read / agentrux_upload.
+
+parameters:
+  - name: action
+    type: string
+    required: false
+    label:
+      en_US: Action filter
+      ja_JP: 権限フィルタ
+    human_description:
+      en_US: "Optional: 'read' or 'write' to only list topics with that grant (empty = all)"
+      ja_JP: "任意: 'read' または 'write' でその権限のある Topic のみ（空＝全部）"
+    llm_description: "Optional action filter: 'read' (for reading) or 'write' (for publishing/uploading). Leave empty to list all accessible topics."
+    form: llm
+
+output_schema:
+  type: object
+  properties:
+    count:
+      type: number
+    topics:
+      type: array
+      items:
+        type: object
+        properties:
+          topic_id:
+            type: string
+          name:
+            type: string
+          actions:
+            type: array
+            items:
+              type: string
+
+extra:
+  python:
+    source: tools/get_topics.py

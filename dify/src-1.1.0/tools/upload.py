@@ -1,85 +1,70 @@
 """Upload a file to an AgenTrux topic."""
-
 import base64
 from collections.abc import Generator
 from typing import Any
 
 import httpx
 from dify_plugin import Tool
-from dify_plugin.entities.tool import ToolInvokeMessage, ToolParameterOption
+from dify_plugin.entities.tool import ToolInvokeMessage
 
 from provider.agentrux_api import (
-    build_topic_options,
     create_payload,
+    looks_like_topic_id,
     upload_to_presigned,
 )
 
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
-_MAX_BASE64_INPUT = 20 * 1024 * 1024  # ~20 MB (base64 overhead)
-
 
 class UploadTool(Tool):
-    def _fetch_parameter_options(self, parameter: str) -> list[ToolParameterOption]:
-        if parameter != "topic_id":
-            return []
-        return [
-            ToolParameterOption(label={"en_US": o["label"], "ja_JP": o["label"]}, value=o["value"])
-            for o in build_topic_options(self.runtime.credentials, {"write"})
-        ]
-
     def _invoke(
         self, tool_parameters: dict[str, Any]
     ) -> Generator[ToolInvokeMessage, None, None]:
         creds = self.runtime.credentials
 
-        topic_id = tool_parameters.get("topic_id") or ""
+        topic_id = (tool_parameters.get("topic_id") or "").strip()
         if not topic_id:
-            yield self.create_text_message("topic_id is required")
-            return
-
-        filename = tool_parameters["filename"]
-        content_type = tool_parameters["content_type"]
-
-        content_b64 = tool_parameters["content_base64"]
-        if len(content_b64) > _MAX_BASE64_INPUT:
             yield self.create_text_message(
-                f"base64 input too large ({len(content_b64)} bytes). "
-                f"Maximum is {_MAX_BASE64_INPUT} bytes."
+                "topic_id is required. Call agentrux_get_topics first to discover it."
+            )
+            return
+        if not looks_like_topic_id(topic_id):
+            yield self.create_text_message(
+                f"topic_id {topic_id!r} is not a valid AgenTrux topic id "
+                "(expected top_<uuid> or a UUID from agentrux_get_topics)."
             )
             return
 
-        try:
-            data = base64.b64decode(content_b64, validate=True)
-        except Exception as e:
-            yield self.create_text_message(f"Invalid base64 content: {e}")
-            return
+        filename = tool_parameters.get("filename") or "file.bin"
+        content_type = tool_parameters.get("content_type") or "application/octet-stream"
+        content_b64 = tool_parameters.get("content_base64") or ""
 
-        if len(data) > MAX_UPLOAD_BYTES:
-            yield self.create_text_message(
-                f"File too large ({len(data)} bytes). "
-                f"Maximum is {MAX_UPLOAD_BYTES} bytes (15 MB)."
-            )
+        try:
+            raw = base64.b64decode(content_b64)
+        except Exception:
+            yield self.create_text_message("content_base64 is not valid base64")
             return
 
         try:
-            result = create_payload(
+            payload = create_payload(
                 creds=creds,
                 topic_id=topic_id,
                 content_type=content_type,
                 filename=filename,
-                size=len(data),
+                size=len(raw),
             )
-            upload_to_presigned(result["upload_url"], data, content_type)
-
-            yield self.create_json_message(
-                {
-                    "object_id": result["object_id"],
-                    "download_url": result.get("download_url", ""),
-                }
-            )
+            yield self.create_json_message(payload)
         except httpx.HTTPStatusError as e:
-            yield self.create_text_message(
-                f"AgenTrux API error: {e.response.status_code}"
-            )
+            yield self.create_text_message(_http_error_message(e))
         except Exception as e:
             yield self.create_text_message(f"AgenTrux error: {e}")
+
+
+def _http_error_message(e: httpx.HTTPStatusError) -> str:
+    code = e.response.status_code
+    if code == 403:
+        return (
+            "AgenTrux API 403: this credential lacks write access to that topic. "
+            "Call agentrux_get_topics(action=write) for writable topics."
+        )
+    if code == 404:
+        return "AgenTrux API 404: topic not found. Re-check topic_id via agentrux_get_topics."
+    return f"AgenTrux API error: {code}"

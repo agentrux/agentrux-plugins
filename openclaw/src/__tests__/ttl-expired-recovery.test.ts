@@ -70,14 +70,17 @@ describe("ttl_expired detection helpers", () => {
 // dependency-injected via fetchLatest, so no HTTP and no inline mirror).
 import { reanchorExpiredCursor } from "../gateway";
 
-interface Waterline { sequence_number: number; event_id: string }
+// cluster-agnostic ordering §3-3: cursor は opaque token / evt_<id>。sequence_number 廃止。
+interface Waterline { event_id: string }
 
 describe("drain loop self-heals on ttl_expired", () => {
   // A topic where the persisted cursor "evt_stale" has aged out. Live events
   // start at evt_100; the server reports evt_100 as oldest_available.
+  // ordering 非保証のため server は event を任意順で返す。
+  // dedupe は processedEvents Set (event_id) のみで行う。
   const LIVE = [
-    { event_id: "evt_100", sequence_number: 100, payload: { message: "a" } },
-    { event_id: "evt_101", sequence_number: 101, payload: { message: "b" } },
+    { event_id: "evt_100", payload: { message: "a" } },
+    { event_id: "evt_101", payload: { message: "b" } },
   ];
   const LATEST = LIVE[LIVE.length - 1];
 
@@ -89,19 +92,16 @@ describe("drain loop self-heals on ttl_expired", () => {
       if (afterEventId === staleCursor) {
         throw new ApiError(404, ttlExpiredBody("evt_100"));
       }
-      return LIVE.filter((e) => e.sequence_number > seqOf(afterEventId));
+      // cursor-based: return events that come after afterEventId (by index)
+      const startIdx = afterEventId ? LIVE.findIndex(e => e.event_id === afterEventId) + 1 : 0;
+      return startIdx >= 0 ? LIVE.slice(startIdx) : [];
     };
   }
 
-  function seqOf(eventId: string | null): number {
-    if (!eventId) return 0;
-    const m = LIVE.find((e) => e.event_id === eventId);
-    return m ? m.sequence_number : 0;
-  }
-
   async function runDrain(): Promise<{ waterline: Waterline; processed: string[]; iterations: number }> {
-    let waterline: Waterline = { sequence_number: 0, event_id: "evt_stale" };
+    let waterline: Waterline = { event_id: "evt_stale" };
     const processed: string[] = [];
+    const processedSet = new Set<string>();
     const pull = makePull("evt_stale");
 
     let iterations = 0;
@@ -119,9 +119,11 @@ describe("drain loop self-heals on ttl_expired", () => {
       }
       if (batch.length === 0) break;
       for (const e of batch) {
-        if (e.sequence_number <= waterline.sequence_number) continue;
+        // dedupe by event_id (ordering 非保証のため seq 比較不可)
+        if (processedSet.has(e.event_id)) continue;
+        processedSet.add(e.event_id);
         processed.push(e.event_id);
-        waterline = { sequence_number: e.sequence_number, event_id: e.event_id };
+        waterline = { event_id: e.cursor || e.event_id };
       }
     }
     return { waterline, processed, iterations };
@@ -133,7 +135,6 @@ describe("drain loop self-heals on ttl_expired", () => {
     // nothing skipped (vs skip-to-latest which would drop evt_100).
     expect(processed).toEqual(["evt_100", "evt_101"]);
     expect(waterline.event_id).toBe("evt_101");
-    expect(waterline.sequence_number).toBe(101);
   });
 
   test("re-anchor self-heals the 404 loop and terminates", async () => {

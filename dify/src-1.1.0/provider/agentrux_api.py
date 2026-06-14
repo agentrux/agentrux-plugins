@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import tempfile
 import time
 
@@ -54,6 +55,25 @@ def _is_url_allowed(base_url: str) -> bool:
     ):
         return True
     return False
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_topic_id(value: str) -> bool:
+    """Lightweight shape check for a topic id before hitting the API.
+
+    Accepts a bare UUID or the prefixed ``top_<uuid>`` form. The server is the
+    real authority (and enforces grants); this only catches obvious mistakes
+    such as an LLM passing a topic *name* instead of the id.
+    """
+    value = (value or "").strip()
+    if value.startswith("top_"):
+        value = value[len("top_"):]
+    return bool(_UUID_RE.match(value))
 
 
 # ---------------------------------------------------------------------------
@@ -244,19 +264,24 @@ def _decode_jwt_scope(token: str) -> list[str]:
     return list(scope) if isinstance(scope, list) else []
 
 
-def build_topic_options(creds: dict, allowed_actions: set[str]) -> list[dict]:
-    """Build dynamic-select options for the topic selector.
+def fetch_topics_raw(creds: dict, allowed_actions: set[str]) -> list[dict]:
+    """Return accessible topics as [{topic_id, name, actions}], action-filtered.
 
-    Primary: GET /topics returns the caller's accessible topics with
-    human-readable names (server-sorted by name). Fallback (older server or
-    error): derive id-only options from the JWT scope claim.
+    Single source of truth for "which topics can this credential reach".
+    Primary: GET /topics (human-readable names, server-sorted). Fallback
+    (older server or error): derive id-only entries from the JWT scope claim.
+
+    Consumed by two presenters that must not drift:
+      - to_options()        -> dynamic-select [{label, value}] (kept for the
+                               day Dify fixes tool dynamic-select; see #36743)
+      - to_topics_payload() -> get_topics tool JSON {topics:[...]}
     """
     try:
         base_url, token = resolve_access_token(creds)
     except Exception:
         return []
 
-    # Primary: GET /topics (names). Preserve the server-side (name, id) order.
+    # Primary: GET /topics. Preserve the server-side (name, id) order.
     try:
         resp = httpx.get(
             f"{base_url}/topics",
@@ -264,24 +289,26 @@ def build_topic_options(creds: dict, allowed_actions: set[str]) -> list[dict]:
             timeout=10,
         )
         if resp.status_code == 200:
-            options: list[dict] = []
+            topics: list[dict] = []
             for item in resp.json().get("items", []):
-                if not (set(item.get("actions", [])) & allowed_actions):
+                actions = list(item.get("actions", []))
+                if not (set(actions) & allowed_actions):
                     continue
                 topic_id = item.get("topic_id")
                 if not topic_id:
                     continue
-                label = item.get("display_name") or item.get("name") or topic_id
-                options.append({"label": label, "value": topic_id})
-            return options
+                name = item.get("display_name") or item.get("name") or topic_id
+                topics.append(
+                    {"topic_id": topic_id, "name": name, "actions": actions}
+                )
+            return topics
     except Exception:
         # Network error, non-JSON body, or unexpected shape -> fall back to
-        # deriving id-only options from the JWT scope claim.
+        # deriving id-only entries from the JWT scope claim.
         pass
 
-    # Fallback: id-only options derived from the JWT scope claim.
-    seen: set[str] = set()
-    options = []
+    # Fallback: id-only entries derived from the JWT scope claim.
+    seen: dict[str, set[str]] = {}
     for entry in _decode_jwt_scope(token):
         if not entry.startswith("topic:"):
             continue
@@ -289,11 +316,28 @@ def build_topic_options(creds: dict, allowed_actions: set[str]) -> list[dict]:
         if len(parts) < 3:
             continue
         topic_id, action = parts[1], parts[2]
-        if action not in allowed_actions or topic_id in seen:
+        if action not in allowed_actions:
             continue
-        seen.add(topic_id)
-        options.append({"label": f"{topic_id} ({action})", "value": topic_id})
-    return options
+        seen.setdefault(topic_id, set()).add(action)
+    return [
+        {"topic_id": tid, "name": tid, "actions": sorted(acts)}
+        for tid, acts in seen.items()
+    ]
+
+
+def to_options(topics: list[dict]) -> list[dict]:
+    """Present fetch_topics_raw() output as dynamic-select [{label, value}]."""
+    return [{"label": t["name"], "value": t["topic_id"]} for t in topics]
+
+
+def to_topics_payload(topics: list[dict]) -> dict:
+    """Present fetch_topics_raw() output as the get_topics tool JSON body."""
+    return {"count": len(topics), "topics": topics}
+
+
+def build_topic_options(creds: dict, allowed_actions: set[str]) -> list[dict]:
+    """Dynamic-select [{label, value}] options (kept for #36743 fix; thin)."""
+    return to_options(fetch_topics_raw(creds, allowed_actions))
 
 
 # ---------------------------------------------------------------------------
@@ -327,12 +371,17 @@ def publish_event(
 def read_events(
     creds: dict,
     topic_id: str,
-    after_sequence_no: int = 0,
+    after: str | None = None,
     limit: int = 20,
     event_type: str | None = None,
+    # 旧引数 after_sequence_no は廃止 (cluster-agnostic ordering §3-3)。
+    # 呼び出し元が旧 kwarg を渡してきた場合は無視する。
+    after_sequence_no: int | None = None,
 ) -> list[dict]:
     base_url, headers = auth_headers(creds)
-    params: dict = {"after_sequence_no": str(after_sequence_no), "limit": str(limit)}
+    params: dict = {"limit": str(limit)}
+    if after:
+        params["after"] = after
     if event_type:
         params["type"] = event_type
     resp = httpx.get(
@@ -342,7 +391,9 @@ def read_events(
         timeout=15,
     )
     resp.raise_for_status()
-    return resp.json().get("items", [])
+    # cluster-agnostic ordering §2: response shape は {events: [...]}。旧 items は廃止。
+    data = resp.json()
+    return data.get("events", data.get("items", []))
 
 
 def create_payload(

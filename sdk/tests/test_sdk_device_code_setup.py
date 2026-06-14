@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-
 from agentrux_sdk.device_code_setup import (
     DeviceCodeSetupPending,
     DeviceCodeSetupResult,

@@ -103,7 +103,7 @@ async def iter_composer_groups(
 
     Args:
         events: 上流 event stream (例: `client.read_hybrid(topic_id=...)`).
-            event は時系列順 (`sequence_number` 昇順) で渡される前提。
+            event は near-order (stored_at 昇順 best-effort) で渡される前提。
         flush_timeout_seconds: text/json 不着のまま flush するまでの秒数。 spec §3-3
             は 60 秒。 0 を指定すると flush しない (= text/json が来るまで永遠に保留)。
 

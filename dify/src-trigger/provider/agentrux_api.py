@@ -288,11 +288,12 @@ def fetch_granted_topics(base_url: str, client_id: str, client_secret: str) -> l
 def read_events(base_url: str, client_id: str, client_secret: str, topic_id: str,
                 after_event_id: str | None = None, limit: int = 20,
                 event_type: str | None = None, order: str = "asc") -> list[dict]:
-    """GET /topics/{top_id}/events (Phase 2.5a SSOT)。
+    """GET /topics/{top_id}/events (cluster-agnostic ordering §3-3)。
 
-    Cursor は evt_id 文字列 (旧 ?after_sequence_no は廃止)。
+    Cursor は opaque token / evt_id 文字列 (旧 ?after_sequence_no は廃止)。
     Response shape: {events: [...], next: {...}}。 旧 items は廃止。
-    each event: {event_id, sequence_number, event_type, payload, payload_object_id?, ...}
+    each event: {event_id, cursor, event_type, payload, payload_object_id?, ...}
+    sequence_number は API から消滅 (ordering 非保証)。
     """
     from urllib.parse import quote, urlencode
     # Echo Policy V1: exclude_self=true で caller (= 同じ script credential で

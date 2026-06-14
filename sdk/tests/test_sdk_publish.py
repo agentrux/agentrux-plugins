@@ -60,14 +60,13 @@ async def test_publish_inline_dict_payload() -> None:
         captured["headers"] = dict(req.headers)
         return httpx.Response(
             201,
-            json={"event_id": "evt_abc", "sequence_number": 7},
+            json={"event_id": "evt_abc"},
         )
 
     client = _make_client_with(handler)
     try:
         r = await client.publish(topic_id="top_x", payload={"foo": "bar"}, event_type="test.event")
         assert r.event_id == "evt_abc"
-        assert r.sequence_number == 7
         assert r.idempotent_replayed is False
         assert captured["path"] == "/topics/top_x/events"
         assert captured["body"]["payload"] == {"foo": "bar"}
@@ -86,7 +85,7 @@ async def test_publish_inline_with_user_idempotency_key() -> None:
         if (r := _token_response(req)) is not None:
             return r
         captured["idk"] = req.headers["idempotency-key"]
-        return httpx.Response(201, json={"event_id": "evt_y", "sequence_number": 1})
+        return httpx.Response(201, json={"event_id": "evt_y"})
 
     client = _make_client_with(handler)
     try:
@@ -105,7 +104,7 @@ async def test_publish_inline_idempotent_replayed_header() -> None:
             return r
         return httpx.Response(
             200,
-            json={"event_id": "evt_replay", "sequence_number": 1},
+            json={"event_id": "evt_replay"},
             headers={"Idempotent-Replayed": "true"},
         )
 
@@ -143,7 +142,7 @@ async def test_publish_small_binary_routes_to_object_ref() -> None:
             state["events_post"] += 1
             body = json.loads(req.content)
             assert body == {"payload_object_id": "pob_small"}
-            return httpx.Response(201, json={"event_id": "evt_sm", "sequence_number": 3})
+            return httpx.Response(201, json={"event_id": "evt_sm"})
         return httpx.Response(500, text=f"unexpected: {req.url.path}")
 
     class _DirectMock:
@@ -201,7 +200,7 @@ async def test_publish_brace_prefixed_binary_routes_to_object_ref() -> None:
         if req.url.path == "/topics/top_x/events":
             state["events_post"] += 1
             assert json.loads(req.content) == {"payload_object_id": "pob_brace"}
-            return httpx.Response(201, json={"event_id": "evt_br", "sequence_number": 4})
+            return httpx.Response(201, json={"event_id": "evt_br"})
         return httpx.Response(500, text=f"unexpected: {req.url.path}")
 
     class _DirectMock:
@@ -262,7 +261,7 @@ async def test_publish_object_ref_when_payload_exceeds_inline_max(monkeypatch) -
             body = json.loads(req.content)
             # SSOT PublishEventBody: object_ref 経路の field 名は payload_object_id
             assert body == {"payload_object_id": "pob_big"}
-            return httpx.Response(201, json={"event_id": "evt_big", "sequence_number": 99})
+            return httpx.Response(201, json={"event_id": "evt_big"})
         return httpx.Response(500, text=f"unexpected: {req.url.path}")
 
     # Patch the direct PUT to MinIO/S3 (presigned URL is outside our test transport).
@@ -298,7 +297,6 @@ async def test_publish_object_ref_when_payload_exceeds_inline_max(monkeypatch) -
         big = b"x" * (INLINE_MAX_BYTES + 100)
         r = await client.publish(topic_id="top_x", payload=big)
         assert r.event_id == "evt_big"
-        assert r.sequence_number == 99
         assert state["payloads_post"] == 1
         assert state["put"] == 1
         assert state["events_post"] == 1
@@ -440,7 +438,7 @@ async def test_publish_scalar_json_routes_inline(payload: object) -> None:
             return r
         captured["path"] = req.url.path
         captured["body"] = json.loads(req.content)
-        return httpx.Response(201, json={"event_id": "evt_s", "sequence_number": 1})
+        return httpx.Response(201, json={"event_id": "evt_s"})
 
     client = _make_client_with(handler)
     try:

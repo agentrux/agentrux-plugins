@@ -1,6 +1,12 @@
 """SDK 内部で使う Pydantic schema.
 
-Phase 5.2 では skeleton 定義のみ。 5.3 以降で field 詳細を確定。
+SSOT: docs/04_design/sdk/sdk_design.md §5 / §6,
+      docs/04_design/messaging/cluster_agnostic_ordering.md §3-3
+
+Phase 5.x → cluster-agnostic モデルへの rebase:
+  - Event.sequence_number 削除 (seq 連番保証を撤回)
+  - Event.cursor 追加 (per-event opaque cursor、 resume に使う、行存在非依存)
+  - PublishResult.sequence_number 削除
 """
 
 from __future__ import annotations
@@ -28,23 +34,25 @@ class PublishResult(_Frozen):
     """publish 成功時の返り値."""
 
     event_id: str  # "evt_<uuid>"
-    sequence_number: int
-    idempotent_replayed: bool  # True なら server 側 replay
+    idempotent_replayed: bool = False  # True なら server 側 replay
 
 
 class Event(_Frozen):
     """read で取得した event.
 
     field 名は server / SSOT (read_flow.md §event item) に一致させる:
-      - stored_at: server が返す保存時刻 (旧 occurred_at は server が emit しない)
-      - payload_object_id: object_ref event の "pob_<uuid>" (旧 payload_object_ref)
+      - stored_at: server が返す保存時刻
+      - payload_object_id: object_ref event の "pob_<uuid>"
+      - cursor: per-event opaque cursor (server 署名付き、 created_at 内包)。
+                checkpoint に保存して resume 位置として使う。行存在に依存しない。
+                値は cluster_agnostic_ordering.md §3-3 の versioned token 形式。
     """
 
     event_id: str
     topic_id: str
     event_type: str
-    sequence_number: int
     stored_at: datetime
     payload: Any = None  # inline の場合のみ (任意 JSON 値)
     payload_object_id: str | None = None  # "pob_<uuid>"、 object_ref の場合のみ
     metadata: dict[str, Any] | None = None
+    cursor: str = ""  # per-event opaque cursor (空文字は未対応 server との後方互換)

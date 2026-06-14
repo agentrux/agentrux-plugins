@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-
 from agentrux_sdk.composer import ComposerGroup, iter_composer_groups
 from agentrux_sdk.models import Event
 
@@ -39,11 +38,11 @@ def _evt(
         event_id=f"evt_{seq:08d}",
         topic_id="top_test",
         event_type=event_type,
-        sequence_number=seq,
         stored_at=datetime.now(UTC),
         payload=payload,
         payload_object_id=payload_object_id,
         metadata=md or None,
+        cursor=f"cursor_{seq:08d}",
     )
 
 

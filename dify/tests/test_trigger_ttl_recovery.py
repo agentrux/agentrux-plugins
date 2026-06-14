@@ -149,7 +149,7 @@ def _make_handler():
 def _latest_event():
     return {
         "event_id": "evt_latest",
-        "sequence_number": 100,
+        # sequence_number は API から消滅 (cluster-agnostic ordering §2-3)
         "event_type": "composer.text",
         "payload": {"message": "hi"},
         "metadata": {},
@@ -168,9 +168,10 @@ def test_ttl_expired_reanchors_to_oldest_retained_fifo(_in_tmp):
         if after_event_id == "evt_aged_out":
             raise HttpError(404, _ttl_body())   # catch-up hits ttl_expired
         # re-anchor pull (after=None, asc): server returns oldest-retained first.
+        # cluster-agnostic ordering §2-3: sequence_number は廃止。
         return [
-            {"event_id": "evt_oldest", "sequence_number": 10, "event_type": "composer.text", "payload": {"message": "old"}, "metadata": {}},
-            {"event_id": "evt_newer", "sequence_number": 11, "event_type": "composer.text", "payload": {"message": "new"}, "metadata": {}},
+            {"event_id": "evt_oldest", "event_type": "composer.text", "payload": {"message": "old"}, "metadata": {}},
+            {"event_id": "evt_newer", "event_type": "composer.text", "payload": {"message": "new"}, "metadata": {}},
         ]
 
     with patch.object(ne, "parse_subscription_id", return_value=sub_id), \
@@ -179,7 +180,7 @@ def test_ttl_expired_reanchors_to_oldest_retained_fifo(_in_tmp):
         out = _make_handler()._on_event(
             request=None,
             parameters={},
-            payload={"topic_id": "top_x", "event_id": "evt_hint", "sequence_number": 9999},
+            payload={"topic_id": "top_x", "event_id": "evt_hint"},
         )
 
     # FIFO: the OLDEST retained event is processed (no skip-to-latest gap).
@@ -205,7 +206,7 @@ def test_non_ttl_http_error_propagates_and_keeps_cursor(_in_tmp):
             _make_handler()._on_event(
                 request=None,
                 parameters={},
-                payload={"topic_id": "top_x", "event_id": "evt_hint", "sequence_number": 9999},
+                payload={"topic_id": "top_x", "event_id": "evt_hint"},
             )
     assert ei.value.status == 500
     # cursor untouched on a non-ttl failure (no spurious re-anchor)
@@ -227,7 +228,7 @@ def test_first_hint_uses_skip_to_latest(_in_tmp):
         out = _make_handler()._on_event(
             request=None,
             parameters={},
-            payload={"topic_id": "top_x", "event_id": "evt_hint", "sequence_number": 9999},
+            payload={"topic_id": "top_x", "event_id": "evt_hint"},
         )
     assert out.variables["event_id"] == "evt_latest"
     assert calls == [(None, 1, "desc")]

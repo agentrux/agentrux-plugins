@@ -1,11 +1,17 @@
 """Pipeline — read → transform → publish chain.
 
-SSOT: docs/04_design/sdk/sdk_design.md §6
+SSOT: docs/04_design/sdk/sdk_design.md §6,
+      docs/04_design/messaging/cluster_agnostic_ordering.md §2 / §3-3
 
 invariant:
 - at-least-once 配送 (重複あり得る、 transform で idempotency_key 継承推奨)
-- checkpoint は処理成功 event のみ commit
-- gap 検出時は GapDetectedError で run 中断 (re-replay は ops 判断)
+- checkpoint は処理成功 event の **opaque cursor** (created_at 内包、行存在非依存) を commit
+  (event_id ではなく cursor を保存することで idle 後の偽 RETENTION_MISS を回避)
+- 重複は `EventIdDedupe` (event_id の bounded set) で排除
+- **順序非保証**: near-order best-effort のみ (pull_client が batch 内ソート)。
+  厳密順序が要る業務は client app 側で独自管理 (2026-06-13 user 確定)
+- **`RetentionMissError`**: resume 位置が retention 外 → run 中断 (re-replay は ops 判断)
+- no-loss は server の watermark+cursor が保証 (client は gap 検出しない)
 - source_topic と sink_topic が同じ場合の loop は caller 責務 (本 SDK は検出しない)
 """
 
@@ -15,10 +21,9 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from agentrux_sdk.checkpoint import CheckpointStore, InMemoryCheckpointStore
+from agentrux_sdk.dedupe import EventIdDedupe
 from agentrux_sdk.errors import ValidationError
-from agentrux_sdk.gap_detector import SequenceGapDetector
 from agentrux_sdk.models import Event, PublishResult
-from agentrux_sdk.reorder_buffer import ReorderBuffer
 
 if TYPE_CHECKING:
     from agentrux_sdk.facade import AgenTruxClient
@@ -37,8 +42,7 @@ class Pipeline:
         sink_topic: str,
         transform: TransformFn,
         checkpoint_store: CheckpointStore | None = None,
-        gap_detector: SequenceGapDetector | None = None,
-        reorder_buffer: ReorderBuffer | None = None,
+        dedupe: EventIdDedupe | None = None,
         mode: str = "pull",  # "pull" | "sse" | "hybrid"
         pull_limit: int = 100,
         pull_interval_seconds: float = 1.0,
@@ -53,8 +57,7 @@ class Pipeline:
         self._sink = sink_topic
         self._transform = transform
         self._cp: CheckpointStore = checkpoint_store or InMemoryCheckpointStore()
-        self._gap: SequenceGapDetector | None = gap_detector
-        self._buf: ReorderBuffer | None = reorder_buffer
+        self._dedupe: EventIdDedupe = dedupe or EventIdDedupe()
         self._mode = mode
         self._pull_limit = pull_limit
         self._pull_interval = pull_interval_seconds
@@ -64,29 +67,34 @@ class Pipeline:
         """run loop. max_events 指定で N 件処理後 return (test 用)。
 
         Returns: 処理成功 (publish 完了) した event 数
+
+        Raises:
+          RetentionMissError: resume cursor が retention 外の場合 (run を中断)。
+            re-replay は ops 判断。
         """
         processed = 0
-        last_cp = await self._cp.load(self._src)
+        last_cursor = await self._cp.load(self._src)
 
-        iterator = self._make_iter(last_event_id=last_cp)
+        iterator = self._make_iter(last_cursor=last_cursor)
         try:
             async for evt in iterator:
-                if self._gap is not None:
-                    self._gap.observe(evt.sequence_number, topic_id=self._src)
+                # at-least-once 重複排除
+                if self._dedupe.is_duplicate(evt.event_id):
+                    continue
 
-                events_to_emit = await self._maybe_reorder(evt)
-                for in_order_evt in events_to_emit:
-                    transformed = await self._transform(in_order_evt)
-                    if transformed is None:
-                        # filter (transform 戻り None) → checkpoint だけ進める
-                        await self._cp.commit(self._src, in_order_evt.event_id)
-                        continue
-                    await self._publish(transformed, source_evt=in_order_evt)
-                    await self._cp.commit(self._src, in_order_evt.event_id)
-                    processed += 1
-                    if max_events is not None and processed >= max_events:
-                        self._stopped = True
-                        return processed
+                transformed = await self._transform(evt)
+                if transformed is None:
+                    # filter (transform 戻り None) → checkpoint だけ進める
+                    await self._commit_cursor(evt)
+                    continue
+
+                await self._publish(transformed, source_evt=evt)
+                await self._commit_cursor(evt)
+                processed += 1
+                if max_events is not None and processed >= max_events:
+                    self._stopped = True
+                    return processed
+
                 if self._stopped:
                     return processed
         finally:
@@ -102,29 +110,33 @@ class Pipeline:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
-    def _make_iter(self, *, last_event_id: str | None):
+    def _make_iter(self, *, last_cursor: str | None):
         if self._mode == "pull":
             return self._client.read_pull(
                 topic_id=self._src,
-                after=last_event_id,
+                after=last_cursor,
                 limit=self._pull_limit,
                 poll_interval_seconds=self._pull_interval,
             )
         if self._mode == "sse":
             return self._client.read_sse(
-                topic_id=self._src, last_event_id=last_event_id, auto_reconnect=True
+                topic_id=self._src, last_event_id=last_cursor, auto_reconnect=True
             )
         return self._client.read_hybrid(
             topic_id=self._src,
-            last_event_id=last_event_id,
+            last_event_id=last_cursor,
             poll_interval_seconds=self._pull_interval,
             limit=self._pull_limit,
         )
 
-    async def _maybe_reorder(self, evt: Event) -> list[Event]:
-        if self._buf is None:
-            return [evt]
-        return await self._buf.push(sequence_number=evt.sequence_number, event=evt)
+    async def _commit_cursor(self, evt: Event) -> None:
+        """処理成功 event の opaque cursor を checkpoint に commit する.
+
+        cursor が空 (後方互換 server) の場合は event_id で代替。
+        opaque cursor を保存することで idle 後の偽 RETENTION_MISS を避ける。
+        """
+        cursor_to_save = evt.cursor if evt.cursor else evt.event_id
+        await self._cp.commit(self._src, cursor_to_save)
 
     async def _publish(self, transformed: Any, *, source_evt: Event) -> PublishResult:
         # transform 戻り値は dict / bytes (BaseModel は publish 側で受理)

@@ -1022,11 +1022,10 @@ describe("SSE drain after hint reception", () => {
   });
 
   test("waterline is advanced per event, not per batch", () => {
-    // Must see per-event waterline update inside the for loop. Phase 2.5a
-    // SSOT renamed the cursor field to `sequence_number` and added an
-    // `event_id` companion to it.
+    // cluster-agnostic ordering §3-3: cursor は opaque token、sequence_number 廃止。
+    // waterline は per-event cursor (opaque) または event_id で前進する。
     expect(gatewaySource).toContain("for (const event of batch");
-    expect(gatewaySource).toContain("sequence_number: event.sequence_number");
+    expect(gatewaySource).toContain("event_id: event.cursor || event.event_id");
   });
 
   test("waterline is persisted after drain completes", () => {

@@ -1,8 +1,11 @@
 """AgenTrux Trigger — receives hints from AgenTrux and dispatches to Event handlers.
 
-Hint payload shape (Phase 2.5b SSOT):
-  { "topic_id": "...", "event_id": "evt_<uuid>", "sequence_number": N,
+Hint payload shape (cluster-agnostic ordering §3-3):
+  { "topic_id": "...", "event_id": "evt_<uuid>", "cursor": "<opaque>",
     "timestamp": T, "delivery": "webhook" | "sse" }
+
+旧 sequence_number フィールドは廃止 (ordering 非保証)。cursor は versioned opaque token
+(内部 parse 禁止、?after= に pass-through するだけ)。
 
 Two delivery modes (user 方針 2026-05-21: webhook 優先 / SSE fallback):
   - **webhook** (default、 推奨): AgenTrux backend POSTs hints to the Dify-allocated
@@ -141,10 +144,11 @@ class AgentruxTrigger(Trigger):
                 response=Response('{"error": "timestamp too old"}', status=400, mimetype="application/json"),
             )
 
-        # 3. Dispatch to new_event handler (new spec field 名: event_id + sequence_number)
+        # 3. Dispatch to new_event handler (cluster-agnostic ordering §3-3)
         topic_id = payload.get("topic_id", "")
         event_id = payload.get("event_id", "")
-        sequence_number = payload.get("sequence_number")
+        cursor = payload.get("cursor", "")
+        # 旧 webhook が sequence_number を送ってくる場合の後方互換受信 (無視)。
 
         return EventDispatch(
             user_id=f"agentrux:{topic_id}",
@@ -153,7 +157,7 @@ class AgentruxTrigger(Trigger):
             payload={
                 "topic_id": topic_id,
                 "event_id": event_id,
-                "sequence_number": sequence_number,
+                "cursor": cursor,
                 # Do NOT pass client_secret here — Event Handler resolves
                 # credentials from subscription.properties directly.
             },

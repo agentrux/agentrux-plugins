@@ -12,20 +12,20 @@ description:
   human:
     en_US: Uploads file content to an AgenTrux topic and returns an object_id for attachment
     ja_JP: ファイル内容を AgenTrux トピックにアップロードし、添付用の object_id を返します
-  llm: Upload file content to an AgenTrux topic. Returns object_id and download_url that can be included in event attachments.
+  llm: Upload file content to an AgenTrux topic. Returns object_id and download_url that can be included in event attachments. If you do not already know the topic_id, FIRST call agentrux_get_topics(action=write) and use a topic_id (UUID) from its response.
 
 parameters:
   - name: topic_id
-    type: dynamic-select
+    type: string
     required: true
     label:
-      en_US: Topic
-      ja_JP: Topic
+      en_US: Topic ID
+      ja_JP: Topic ID
     human_description:
-      en_US: Select an AgenTrux topic (write-granted topics only)
-      ja_JP: AgenTrux トピックを選択（write 権限のある Topic のみ）
-    llm_description: UUID of the AgenTrux topic (write-granted)
-    form: form
+      en_US: AgenTrux topic id (top_<uuid> or UUID). Use the List Topics tool to find it.
+      ja_JP: AgenTrux トピック id（top_<uuid> または UUID）。List Topics ツールで確認できます。
+    llm_description: The target AgenTrux topic id (a UUID, optionally prefixed top_). Obtain it from agentrux_get_topics(action=write) and copy the exact topic_id value; do NOT pass a topic name.
+    form: llm
 
   - name: filename
     type: string
