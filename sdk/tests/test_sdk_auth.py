@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from agentrux_sdk import AgentRuxClient, SDKConfig
 from agentrux_sdk.auth import Authenticator
 from agentrux_sdk.errors import (

@@ -52,20 +52,30 @@ interface ImageContent {
 
 const WATERLINE_DIR = AGENTRUX_DIR;
 
-// Phase 2.5a SSOT: cursor は evt_id 文字列ベース (旧 sequence_no int は廃止)。
-// in-memory compare 用に sequence_number も保持 (in-batch dedup の defense in depth)。
-// 旧 format ({ <topicId>: <int> } map) は読み捨て、 v2 ({ v: 2, w: { <topicId>: {seq, evt} } }) に切替。
-interface WaterlineEntry { sequence_number: number; event_id: string }
+// cluster-agnostic ordering (§2/§3-3 SSOT): cursor は versioned opaque token
+// または evt_<id> 文字列。sequence_number は API から消滅。
+// dedupe は event_id Set のみで行う (ordering 非保証のため seq 比較不可)。
+// 旧 format v1 (int map) / v2 ({seq, evt}) は読み捨て。v3 ({ event_id }) に切替。
+interface WaterlineEntry { event_id: string }
 type WaterlineMap = Record<string, WaterlineEntry>;
 
 function loadWaterlineMap(): WaterlineMap {
   try {
     if (fs.existsSync(WATERLINE_PATH)) {
       const data = JSON.parse(fs.readFileSync(WATERLINE_PATH, "utf-8"));
-      if (data && data.v === 2 && data.w && typeof data.w === "object") {
+      // v3: { v: 3, w: { <topicId>: { event_id } } }
+      if (data && data.v === 3 && data.w && typeof data.w === "object") {
         return data.w as WaterlineMap;
       }
-      // 旧 format (v1 int map or even older) は無効化 → bootstrap からやり直し
+      // v2 legacy: { v: 2, w: { <topicId>: { seq, event_id } } } — extract event_id only
+      if (data && data.v === 2 && data.w && typeof data.w === "object") {
+        const out: WaterlineMap = {};
+        for (const [k, v] of Object.entries(data.w as Record<string, any>)) {
+          if (v && typeof v.event_id === "string") out[k] = { event_id: v.event_id };
+        }
+        return out;
+      }
+      // 旧 v1 format (int map) は無効化 → bootstrap からやり直し
     }
   } catch {}
   return {};
@@ -74,7 +84,7 @@ function loadWaterlineMap(): WaterlineMap {
 function loadWaterline(topicId: string): WaterlineEntry | null {
   const map = loadWaterlineMap();
   const e = map[ensureTopPrefix(topicId)];
-  if (e && typeof e.event_id === "string" && typeof e.sequence_number === "number") return e;
+  if (e && typeof e.event_id === "string") return e;
   return null;
 }
 
@@ -86,7 +96,7 @@ function saveWaterline(topicId: string, entry: WaterlineEntry): void {
     const map = loadWaterlineMap();
     map[ensureTopPrefix(topicId)] = entry;
     const tmp = WATERLINE_PATH + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify({ v: 2, w: map }), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify({ v: 3, w: map }), { mode: 0o600 });
     fs.renameSync(tmp, WATERLINE_PATH);
   } catch {}
 }
@@ -113,7 +123,7 @@ export function reanchorExpiredCursor(topicId: string, log?: any): WaterlineEntr
   log?.warn?.(
     `[agentrux] Cursor expired (ttl); re-anchoring to oldest retained (FIFO drain) topic=${topicId}`,
   );
-  return { sequence_number: 0, event_id: "" };
+  return { event_id: "" };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +172,7 @@ interface AgenTruxAttachment {
 
 interface AgenTruxEvent {
   event_id: string;
-  sequence_number: number;          // Phase 2.5a SSOT、 旧 sequence_no は廃止
+  cursor?: string;                   // cluster-agnostic §3-3: per-event opaque cursor (versioned token)
   event_type: string;                // Phase 2.2 SSOT、 旧 type は廃止
   payload: {
     request_id?: string;
@@ -247,7 +257,8 @@ export const agentruxGateway = {
     const processedEvents = new Set<string>();
     let reconnectAttempts = 0;
 
-    // Phase 2.5a SSOT: waterline は { sequence_number, event_id }。 event_id を ?after= に渡す。
+    // cluster-agnostic ordering §3-3: waterline = { event_id } (opaque cursor)。
+    // event_id を ?after= に渡す (opaque cursor / evt_<id> どちらも server が受理)。
     // Default behavior on (re)start: skip to the latest event so a long
     // backlog isn't replayed every time the gateway is restarted. The saved
     // disk waterline is used only when `resumeFromLastSeq` is opted-in (rare
@@ -256,20 +267,18 @@ export const agentruxGateway = {
     let waterline: WaterlineEntry;
     if (saved !== null) {
       waterline = saved;
-      log?.info?.(`[agentrux] Resuming from saved waterline seq=${waterline.sequence_number} evt=${waterline.event_id} topic=${topicId}`);
+      log?.info?.(`[agentrux] Resuming from saved waterline evt=${waterline.event_id} topic=${topicId}`);
     } else {
-      waterline = { sequence_number: 0, event_id: "" };
+      waterline = { event_id: "" };
       try {
         // Skip to latest. desc + limit=1 で最新を 1 件取得。
         const latestBatch = await pullEvents(creds, account.commandTopicId, null, 1, "desc", { excludeSelf: account.excludeOwnEvents });
         if (latestBatch.length > 0) {
           const e = latestBatch[0];
-          waterline = {
-            sequence_number: Number(e.sequence_number || 0),
-            event_id: String(e.event_id || ""),
-          };
+          // per-event cursor (opaque token) を優先、 なければ event_id にフォールバック。
+          waterline = { event_id: String(e.cursor || e.event_id || "") };
           saveWaterline(topicId, waterline);
-          log?.info?.(`[agentrux] Startup: skipped to latest seq=${waterline.sequence_number} evt=${waterline.event_id}`);
+          log?.info?.(`[agentrux] Startup: skipped to latest evt=${waterline.event_id}`);
         } else {
           log?.info?.(`[agentrux] Startup: topic is empty, waterline initialized empty`);
         }
@@ -313,7 +322,7 @@ export const agentruxGateway = {
     const MAX_RETRIES = 3;
 
     const processEvent = async (event: AgenTruxEvent): Promise<void> => {
-      if (event.sequence_number <= waterline.sequence_number) return;
+      // ordering 非保証: seq 比較は不可。event_id Set のみで dedupe。
       if (processedEvents.has(event.event_id)) return;
 
       const payload = event.payload;
@@ -332,7 +341,7 @@ export const agentruxGateway = {
       const conversationKey = payload?.conversation_key ?? "default";
       const requestId = payload?.request_id ?? event.event_id;
 
-      log?.info?.(`[agentrux] Processing event ${event.event_id} seq=${event.sequence_number} req=${requestId}`);
+      log?.info?.(`[agentrux] Processing event ${event.event_id} req=${requestId}`);
 
       // --- SDK dispatch (following openclaw-nostr pattern) ---
       const cfg = loadConfig();
@@ -490,11 +499,10 @@ export const agentruxGateway = {
 
     const advanceWaterline = (event: AgenTruxEvent): void => {
       processedEvents.add(event.event_id);
-      if (event.sequence_number > waterline.sequence_number) {
-        waterline = {
-          sequence_number: event.sequence_number,
-          event_id: event.event_id,
-        };
+      // cursor は per-event opaque token を優先、なければ event_id を代替。
+      const nextCursor = event.cursor || event.event_id;
+      if (nextCursor && nextCursor !== waterline.event_id) {
+        waterline = { event_id: nextCursor };
         saveWaterline(topicId, waterline);
       }
       if (processedEvents.size > 10_000) {
@@ -611,18 +619,15 @@ export const agentruxGateway = {
       // ignore any persisted waterline unless `resumeFromLastSeq` was opted
       // in. Saved file is overwritten below.
       const mtSaved = account.resumeFromLastSeq ? loadWaterline(mtTopicId) : null;
-      let mtWaterline: WaterlineEntry = mtSaved ?? { sequence_number: 0, event_id: "" };
+      let mtWaterline: WaterlineEntry = mtSaved ?? { event_id: "" };
       if (!mtWaterline.event_id) {
         try {
           const latestBatch = await pullEvents(creds!, mtTopicId, null, 1, "desc", { excludeSelf: account.excludeOwnEvents });
           if (latestBatch.length > 0) {
             const e = latestBatch[0];
-            mtWaterline = {
-              sequence_number: Number(e.sequence_number || 0),
-              event_id: String(e.event_id || ""),
-            };
+            mtWaterline = { event_id: String(e.cursor || e.event_id || "") };
             saveWaterline(mtTopicId, mtWaterline);
-            log?.info?.(`[agentrux] Messaging topic "${mtId}" skipped to latest seq=${mtWaterline.sequence_number} evt=${mtWaterline.event_id}`);
+            log?.info?.(`[agentrux] Messaging topic "${mtId}" skipped to latest evt=${mtWaterline.event_id}`);
           }
         } catch (err: any) {
           log?.warn?.(`[agentrux] Messaging topic "${mtId}" waterline init failed: ${err?.message}`);
@@ -689,13 +694,10 @@ export const agentruxGateway = {
                         // Future: dispatch via OpenClaw hook (onEvent: "dispatch")
                         // For now, advance waterline per event so agentrux_read
                         // sees fresh data and no events are skipped.
-                        mtWaterline = {
-                          sequence_number: event.sequence_number,
-                          event_id: event.event_id,
-                        };
+                        mtWaterline = { event_id: event.cursor || event.event_id };
                       }
                       saveWaterline(mtTopicId, mtWaterline);
-                      log?.info?.(`[agentrux] Messaging topic "${mtId}" drained ${batch.length} events, waterline seq=${mtWaterline.sequence_number}`);
+                      log?.info?.(`[agentrux] Messaging topic "${mtId}" drained ${batch.length} events, waterline evt=${mtWaterline.event_id}`);
                     }
                   } catch (err: any) {
                     log?.warn?.(`[agentrux] Messaging topic "${mtId}" drain error: ${err?.message}`);

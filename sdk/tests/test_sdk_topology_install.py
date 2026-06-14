@@ -18,7 +18,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from agentrux_sdk.errors import ConfigError
 from agentrux_sdk.topology_install import (
     InstallAuthError,

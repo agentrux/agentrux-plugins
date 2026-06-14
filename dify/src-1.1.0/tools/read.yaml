@@ -12,20 +12,20 @@ description:
   human:
     en_US: Reads recent events from the specified AgenTrux topic
     ja_JP: 指定した AgenTrux トピックから最近のイベントを読み取ります
-  llm: Read recent events from an AgenTrux PubSub topic. Use this to check messages, responses, or status updates from other agents.
+  llm: Read recent events from an AgenTrux PubSub topic. Use this to check messages, responses, or status updates from other agents. If you do not already know the topic_id, FIRST call agentrux_get_topics(action=read) and use a topic_id (UUID) from its response.
 
 parameters:
   - name: topic_id
-    type: dynamic-select
+    type: string
     required: true
     label:
-      en_US: Topic
-      ja_JP: Topic
+      en_US: Topic ID
+      ja_JP: Topic ID
     human_description:
-      en_US: Select an AgenTrux topic (read-granted topics only)
-      ja_JP: AgenTrux トピックを選択（read 権限のある Topic のみ）
-    llm_description: UUID of the AgenTrux topic to read from (read-granted)
-    form: form
+      en_US: AgenTrux topic id (top_<uuid> or UUID). Use the List Topics tool to find it.
+      ja_JP: AgenTrux トピック id（top_<uuid> または UUID）。List Topics ツールで確認できます。
+    llm_description: The AgenTrux topic id to read from (a UUID, optionally prefixed top_). Obtain it from agentrux_get_topics(action=read) and copy the exact topic_id value; do NOT pass a topic name.
+    form: llm
 
   - name: limit
     type: number

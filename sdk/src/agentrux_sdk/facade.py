@@ -23,9 +23,7 @@ class AgentRuxClient:
           client_id="crd_...",
           client_secret="aks_...",
       ) as client:
-          # 5.4 で実装
           await client.publish(topic_id="top_X", payload={"k": "v"})
-          # 5.5 で実装
           async for evt in client.read_hybrid(topic_id="top_Y"):
               ...
     """
@@ -106,6 +104,11 @@ class AgentRuxClient:
         poll_interval_seconds: float = 1.0,
         stop_when_empty: bool = False,
     ):
+        """Pull mode: GET /events?after=<opaque cursor> を polling.
+
+        after に opaque cursor (evt.cursor) または evt_<id> を渡す。
+        推奨は checkpoint から読み込んだ opaque cursor (行存在非依存)。
+        """
         from agentrux_sdk.pull_client import read_pull as _read_pull
 
         return _read_pull(
@@ -125,6 +128,10 @@ class AgentRuxClient:
         auto_reconnect: bool = True,
         max_reconnect_attempts: int = 3,
     ):
+        """SSE mode: GET /events/stream。 Last-Event-ID に opaque cursor を渡す。
+
+        retention 外 reconnect は RetentionMissError を raise する。
+        """
         from agentrux_sdk.sse_client import read_sse as _read_sse
 
         return _read_sse(
@@ -143,6 +150,7 @@ class AgentRuxClient:
         poll_interval_seconds: float = 1.0,
         limit: int = 100,
     ):
+        """Hybrid mode: SSE 優先 + Pull fallback。 opaque cursor を共有する。"""
         from agentrux_sdk.hybrid_consumer import read_hybrid as _read_hybrid
 
         return _read_hybrid(
@@ -163,12 +171,18 @@ class AgentRuxClient:
         sink_topic: str,
         transform,
         checkpoint_store=None,
-        gap_detector=None,
-        reorder_buffer=None,
+        dedupe=None,
         mode: str = "pull",
         pull_limit: int = 100,
         pull_interval_seconds: float = 1.0,
     ):
+        """read → transform → publish chain。
+
+        Args:
+          checkpoint_store: opaque cursor を永続化する CheckpointStore。
+          dedupe: EventIdDedupe インスタンス (at-least-once 重複排除)。
+                  None なら default window=10_000 で自動生成。
+        """
         from agentrux_sdk.pipeline import Pipeline
 
         return Pipeline(
@@ -177,8 +191,7 @@ class AgentRuxClient:
             sink_topic=sink_topic,
             transform=transform,
             checkpoint_store=checkpoint_store,
-            gap_detector=gap_detector,
-            reorder_buffer=reorder_buffer,
+            dedupe=dedupe,
             mode=mode,
             pull_limit=pull_limit,
             pull_interval_seconds=pull_interval_seconds,

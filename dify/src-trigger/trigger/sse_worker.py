@@ -155,10 +155,13 @@ class _TopicStream(threading.Thread):
             if resp.status != 200:
                 raise RuntimeError(f"SSE handshake status={resp.status}")
             logger.info("[sse %s] connected", self.topic_id)
-            # SSE frame is multi-line terminated by blank line。 Backend (Phase 2.5b SSOT) sends:
-            #   event: hint\nid: evt_<uuid>\ndata: {"seq": N}\n\n
+            # SSE frame is multi-line terminated by blank line。
+            # cluster-agnostic ordering §3-3 / §4 (sse_protocol):
+            #   event: hint\nid: <opaque_cursor>\ndata: {}\n\n
             #   event: heartbeat\ndata: {}\n\n
             #   event: ready\ndata: {}\n\n
+            # frame `id` = opaque cursor (versioned token)。
+            # 旧 data.seq (integer) は廃止。reconnect は Last-Event-ID に cursor を渡す。
             # 1 frame = 1 dict (event/id/data ごと)、 blank line で flush
             current_frame: dict[str, str] = {}
             for raw_line in resp:
@@ -182,35 +185,36 @@ class _TopicStream(threading.Thread):
         """SSE 1 frame を処理。 hint 以外 (ready/heartbeat) は捨てる。"""
         if frame.get("event") != "hint":
             return
-        evt_id = frame.get("id", "").strip()
-        if evt_id:
-            self.last_event_id = evt_id
-        # data は {"seq": N} 形式 (Phase 2.5b SSOT)、 旧 latest_sequence_no は廃止
-        seq: int | None = None
+        # cluster-agnostic ordering §3-3: frame `id` = opaque cursor。
+        # event_id は data payload の "event_id" フィールドから取る (server が送る場合)。
+        # data.seq は廃止; cursor だけあれば十分。
+        cursor = frame.get("id", "").strip()
+        if cursor:
+            self.last_event_id = cursor
+        # data から event_id を取る (server が送る場合。無ければ cursor = event_id とみなす)
         try:
             payload = json.loads(frame.get("data", "{}"))
-            if isinstance(payload, dict) and "seq" in payload:
-                seq = int(payload["seq"])
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-        if not evt_id or seq is None:
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        evt_id = (payload.get("event_id") if isinstance(payload, dict) else None) or cursor
+        if not evt_id:
             return
-        self._loopback_post(evt_id, seq)
+        self._loopback_post(evt_id, cursor)
 
-    def _loopback_post(self, event_id: str, sequence_number: int) -> None:
+    def _loopback_post(self, event_id: str, cursor: str) -> None:
         """plugin endpoint に hint 内容を loopback POST (M9 webhook 経路を借りる)。
 
-        新 spec field 名:
-          - event_id (旧 webhook には無かった、 SSE で新規追加)
-          - sequence_number (旧 latest_sequence_no 廃止)
-        downstream `_dispatch_event` も新 field 名で読む。
+        cluster-agnostic ordering §3-3:
+          - event_id: evt_<uuid> (永続参照キー)
+          - cursor: opaque cursor (resume 専用、retention 窓内有効)
+        旧 sequence_number は廃止。 downstream `_on_event` は event_id で読む。
         """
         target_url = rewrite_endpoint_for_inner_api(self.endpoint)
 
         body = json.dumps({
             "topic_id": self.topic_id,
             "event_id": event_id,
-            "sequence_number": sequence_number,
+            "cursor": cursor,
             "timestamp": int(time.time()),
             "delivery": "sse",
         }).encode("utf-8")

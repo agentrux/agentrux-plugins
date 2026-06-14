@@ -23,13 +23,13 @@ def test_error_hierarchy() -> None:
         ConfigError,
         ConflictError,
         CredentialRotatedError,
-        GapDetectedError,
         IdempotencyConflictError,
         ObjectStorageError,
         PayloadTooLargeError,
         PermissionDeniedError,
         RateLimitError,
         ResourceNotFoundError,
+        RetentionMissError,
         ServerError,
         TemporaryError,
         ValidationError,
@@ -40,7 +40,7 @@ def test_error_hierarchy() -> None:
         PermissionDeniedError, ResourceNotFoundError, ConflictError,
         IdempotencyConflictError, PayloadTooLargeError, RateLimitError,
         ValidationError, TemporaryError, ServerError, ObjectStorageError,
-        GapDetectedError,
+        RetentionMissError,
     ]:
         assert issubclass(exc_cls, AgenTruxError)
     # IdempotencyConflictError は ConflictError も継承

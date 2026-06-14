@@ -91,7 +91,7 @@ async def main() -> int:
         pub = await client.publish(
             topic_id=source, payload=sent_payload, event_type=EVENT_TYPE
         )
-        print(f"[verify] published evt={pub.event_id} seq={pub.sequence_number}")
+        print(f"[verify] published evt={pub.event_id}")
 
         # 2) poll SINK until a matching correlation_id arrives, or timeout.
         deadline = t_send + TIMEOUT_S
@@ -109,7 +109,7 @@ async def main() -> int:
                     print(f"[verify] PASS — round-trip in {elapsed_ms} ms")
                     print(
                         f"[verify] sink event_id={evt.event_id} "
-                        f"event_type={evt.event_type} seq={evt.sequence_number}"
+                        f"event_type={evt.event_type}"
                     )
                     print(
                         f"[verify] sink payload="

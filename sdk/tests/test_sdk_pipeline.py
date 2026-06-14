@@ -1,24 +1,29 @@
-"""SDK Phase 5.6 — pipeline + checkpoint + gap detector + reorder buffer."""
+"""SDK Phase 5.6 — pipeline + checkpoint + dedupe + cursor (cluster-agnostic モデル).
+
+cluster_agnostic_ordering.md §2 に合わせて書き換え:
+  - gap_detector / reorder_buffer テストを撤去 (seq 連番依存、 新契約で成立しない)
+  - dedupe / RetentionMissError / opaque cursor checkpoint / 空 poll frontier の単体テスト追加
+  - near-order (batch 内 stored_at ソート) の単体テスト追加
+"""
 
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
-
 from agentrux_sdk import AgentRuxClient
 from agentrux_sdk.checkpoint import FileCheckpointStore, InMemoryCheckpointStore
-from agentrux_sdk.errors import GapDetectedError, ValidationError
-from agentrux_sdk.gap_detector import SequenceGapDetector
+from agentrux_sdk.dedupe import EventIdDedupe
+from agentrux_sdk.errors import RetentionMissError, ValidationError
 from agentrux_sdk.models import Event
-from agentrux_sdk.reorder_buffer import ReorderBuffer
 
 pytestmark = pytest.mark.unit
 
 
 # ============================================================================
-# CheckpointStore (in-memory + file)
+# CheckpointStore — opaque cursor 保存
 # ============================================================================
 
 
@@ -26,111 +31,65 @@ pytestmark = pytest.mark.unit
 async def test_in_memory_checkpoint_round_trip() -> None:
     cp = InMemoryCheckpointStore()
     assert await cp.load("top_a") is None
-    await cp.commit("top_a", "evt_001")
-    assert await cp.load("top_a") == "evt_001"
-    await cp.commit("top_a", "evt_002")  # 上書き
-    assert await cp.load("top_a") == "evt_002"
+    await cp.commit("top_a", "cursor_opaque_001")
+    assert await cp.load("top_a") == "cursor_opaque_001"
+    await cp.commit("top_a", "cursor_opaque_002")  # 上書き
+    assert await cp.load("top_a") == "cursor_opaque_002"
 
 
 @pytest.mark.asyncio
 async def test_file_checkpoint_persists_across_instances(tmp_path) -> None:
     p = tmp_path / "cp.json"
     cp1 = FileCheckpointStore(p)
-    await cp1.commit("top_a", "evt_x")
+    await cp1.commit("top_a", "opaque_cursor_xyz")
     cp2 = FileCheckpointStore(p)
-    assert await cp2.load("top_a") == "evt_x"
+    assert await cp2.load("top_a") == "opaque_cursor_xyz"
 
 
 # ============================================================================
-# SequenceGapDetector
+# EventIdDedupe — bounded window 重複排除
 # ============================================================================
 
 
-def test_gap_detector_in_order_passes() -> None:
-    gd = SequenceGapDetector(window=10)
-    for i in [1, 2, 3, 4, 5]:
-        gd.observe(i, topic_id="top_x")
-    assert gd.last_seen == 5
+def test_dedupe_first_occurrence_is_not_duplicate() -> None:
+    d = EventIdDedupe(window=10)
+    assert not d.is_duplicate("evt_001")
+    assert d.seen_count == 1
 
 
-def test_gap_detector_small_gap_within_window_passes() -> None:
-    """gap が window 以内 → reorder buffer 解決と仮定して pass."""
-    gd = SequenceGapDetector(window=10)
-    gd.observe(1, topic_id="top_x")
-    gd.observe(5, topic_id="top_x")  # gap=3 < window
-    assert gd.last_seen == 5
+def test_dedupe_second_occurrence_is_duplicate() -> None:
+    d = EventIdDedupe(window=10)
+    d.is_duplicate("evt_001")
+    assert d.is_duplicate("evt_001")
+    assert d.seen_count == 1  # 重複は追加されない
 
 
-def test_gap_detector_large_gap_raises() -> None:
-    gd = SequenceGapDetector(window=5)
-    gd.observe(10, topic_id="top_x")
-    with pytest.raises(GapDetectedError) as ei:
-        gd.observe(100, topic_id="top_x")  # gap=89 > 5
-    assert ei.value.gap_after == 10
-    assert ei.value.gap_size == 89
+def test_dedupe_window_eviction_drops_oldest() -> None:
+    """window=2: evt_001 → evt_002 → evt_003 で evt_001 が evict され、 再挿入時に not-duplicate."""
+    d = EventIdDedupe(window=2)
+    d.is_duplicate("evt_001")
+    d.is_duplicate("evt_002")
+    d.is_duplicate("evt_003")  # evt_001 が evict される
+    assert not d.is_duplicate("evt_001")  # evict 済なので初回扱い
+    assert d.seen_count == 2
 
 
-def test_gap_detector_duplicate_ignored() -> None:
-    gd = SequenceGapDetector(window=5)
-    gd.observe(5, topic_id="top_x")
-    gd.observe(3, topic_id="top_x")  # < last_seen → 無視
-    gd.observe(5, topic_id="top_x")  # 同 → 無視
-    assert gd.last_seen == 5
+def test_dedupe_invalid_window_raises() -> None:
+    with pytest.raises(ValueError, match="window"):
+        EventIdDedupe(window=0)
 
 
-# ============================================================================
-# ReorderBuffer
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_reorder_buffer_immediate_flush_in_order() -> None:
-    buf = ReorderBuffer(max_lag=10)
-    out1 = await buf.push(sequence_number=1, event="a")
-    out2 = await buf.push(sequence_number=2, event="b")
-    assert out1 == ["a"]
-    assert out2 == ["b"]
-    assert buf.pending_count == 0
-
-
-@pytest.mark.asyncio
-async def test_reorder_buffer_out_of_order_buffered_then_flushed() -> None:
-    buf = ReorderBuffer(max_lag=10)
-    out1 = await buf.push(sequence_number=1, event="a")  # → ["a"]
-    out3 = await buf.push(sequence_number=3, event="c")  # buffer (2 待ち)
-    out2 = await buf.push(sequence_number=2, event="b")  # → ["b", "c"] (2,3 連続)
-    assert out1 == ["a"]
-    assert out3 == []
-    assert out2 == ["b", "c"]
-    assert buf.pending_count == 0
-
-
-@pytest.mark.asyncio
-async def test_reorder_buffer_max_lag_forces_flush() -> None:
-    """max_lag=2、 5→7→9 と来たら 9 で max_lag 超過 → 5 を _next にして 5,7,9 を順次 flush."""
-    buf = ReorderBuffer(max_lag=2)
-    out5 = await buf.push(sequence_number=5, event="e5")  # _next=5 → ["e5"]
-    out7 = await buf.push(sequence_number=7, event="e7")  # 待ち、 pending=1
-    out9 = await buf.push(sequence_number=9, event="e9")  # 待ち、 pending=2 (OK)
-    out11 = await buf.push(sequence_number=11, event="e11")  # 待ち、 pending=3 (>max_lag=2 → 諦め)
-    # max_lag 超過時に _next を最小 (7) に進めて 7 を flush。 9, 11 は再び pending
-    assert out5 == ["e5"]
-    assert out7 == []
-    assert out9 == []
-    assert out11 == ["e7"]
-
-
-@pytest.mark.asyncio
-async def test_reorder_buffer_duplicate_ignored() -> None:
-    buf = ReorderBuffer(max_lag=10)
-    o1 = await buf.push(sequence_number=1, event="a")
-    o1_dup = await buf.push(sequence_number=1, event="a-dup")  # 古い → 無視
-    assert o1 == ["a"]
-    assert o1_dup == []
+def test_dedupe_multiple_topics_independent() -> None:
+    """topic が異なれば event_id が同一でも別扱い (EventIdDedupe は event_id だけで管理するため
+    同一 event_id でも is_duplicate=True になる — caller が topic 別に instance を持つことを想定)."""
+    d = EventIdDedupe(window=100)
+    assert not d.is_duplicate("evt_001")
+    # 同 event_id → duplicate
+    assert d.is_duplicate("evt_001")
 
 
 # ============================================================================
-# Pipeline (end-to-end with mock transport)
+# Pull client — near-order sort (batch 内 stored_at 昇順)
 # ============================================================================
 
 
@@ -146,6 +105,291 @@ def _make_client_for_pipeline(handler: callable) -> AgentRuxClient:
         headers={"User-Agent": client.config.user_agent},
     )
     return client
+
+
+@pytest.mark.asyncio
+async def test_pull_near_order_batch_sort_by_stored_at() -> None:
+    """Pull が batch 内を stored_at 昇順にソートして yield することを確認."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        # stored_at が逆順で来ても SDK がソートして返す
+        return httpx.Response(
+            200,
+            json={
+                "events": [
+                    {
+                        "event_id": "evt_003",
+                        "topic_id": "top_src",
+                        "event_type": "in",
+                        "stored_at": "2026-06-13T00:00:03+00:00",
+                        "cursor": "cursor_003",
+                        "payload": {"n": 3},
+                    },
+                    {
+                        "event_id": "evt_001",
+                        "topic_id": "top_src",
+                        "event_type": "in",
+                        "stored_at": "2026-06-13T00:00:01+00:00",
+                        "cursor": "cursor_001",
+                        "payload": {"n": 1},
+                    },
+                    {
+                        "event_id": "evt_002",
+                        "topic_id": "top_src",
+                        "event_type": "in",
+                        "stored_at": "2026-06-13T00:00:02+00:00",
+                        "cursor": "cursor_002",
+                        "payload": {"n": 2},
+                    },
+                ],
+                "next": {"has_more": False},
+            },
+        )
+
+    client = _make_client_for_pipeline(handler)
+    try:
+        seen_ids = []
+        async for evt in client.read_pull(topic_id="top_src", stop_when_empty=True):
+            seen_ids.append(evt.event_id)
+        assert seen_ids == ["evt_001", "evt_002", "evt_003"]
+    finally:
+        await client.aclose()
+
+
+# ============================================================================
+# Pull client — 空 poll での frontier cursor 保持
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_pull_empty_poll_advances_frontier_cursor() -> None:
+    """空 poll でも server が frontier_cursor を返したら cursor が前進する."""
+    captured: list[str | None] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "events": [],
+                "next": {"has_more": False, "frontier_cursor": "cursor_frontier_99"},
+            },
+        )
+
+    from agentrux_sdk.pull_client import read_pull
+
+    client = _make_client_for_pipeline(handler)
+    try:
+        async for _ in read_pull(
+            client,
+            topic_id="top_src",
+            stop_when_empty=True,
+            on_cursor_advance=captured.append,
+        ):
+            pass
+        # 空 poll でも frontier cursor で前進
+        assert captured == ["cursor_frontier_99"]
+    finally:
+        await client.aclose()
+
+
+# ============================================================================
+# Pull client — RETENTION_MISS → RetentionMissError
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_pull_retention_miss_raises_retention_miss_error() -> None:
+    """server が RETENTION_MISS を返したら RetentionMissError を raise する."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        return httpx.Response(
+            404,
+            json={"detail": {"error": "RETENTION_MISS", "message": "cursor outside retention"}},
+        )
+
+    client = _make_client_for_pipeline(handler)
+    try:
+        with pytest.raises(RetentionMissError, match="retention"):
+            async for _ in client.read_pull(
+                topic_id="top_src", after="cursor_old", stop_when_empty=True
+            ):
+                pass
+    finally:
+        await client.aclose()
+
+
+# ============================================================================
+# Pipeline — opaque cursor checkpoint
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_pipeline_checkpoints_opaque_cursor_not_event_id() -> None:
+    """pipeline は evt.cursor を checkpoint に保存する (event_id ではなく)."""
+    state = {"published": []}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        if req.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "event_id": "evt_001",
+                            "topic_id": "top_src",
+                            "event_type": "in",
+                            "stored_at": "2026-06-13T00:00:01+00:00",
+                            "cursor": "opaque_cursor_001",
+                            "payload": {"n": 1},
+                        },
+                        {
+                            "event_id": "evt_002",
+                            "topic_id": "top_src",
+                            "event_type": "in",
+                            "stored_at": "2026-06-13T00:00:02+00:00",
+                            "cursor": "opaque_cursor_002",
+                            "payload": {"n": 2},
+                        },
+                    ],
+                    "next": {"has_more": False},
+                },
+            )
+        if req.method == "POST":
+            body = json.loads(req.content)
+            state["published"].append(body["payload"])
+            return httpx.Response(
+                201,
+                json={"event_id": f"evt_out_{len(state['published'])}"},
+            )
+        return httpx.Response(500, text=f"unexpected: {req.method} {req.url.path}")
+
+    async def transform(evt: Event) -> dict:
+        return {"out": evt.payload["n"] * 10}
+
+    client = _make_client_for_pipeline(handler)
+    cp = InMemoryCheckpointStore()
+    try:
+        pipe = client.pipeline(
+            source_topic="top_src",
+            sink_topic="top_sink",
+            transform=transform,
+            checkpoint_store=cp,
+            pull_interval_seconds=0.01,
+        )
+        processed = await pipe.run(max_events=2)
+        assert processed == 2
+        # checkpoint は opaque cursor を保存 (event_id ではなく)
+        assert await cp.load("top_src") == "opaque_cursor_002"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_dedupes_repeated_event_ids() -> None:
+    """同一 event_id が重複して来ても 1 回しか publish しない (at-least-once dedupe)."""
+    publish_count = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        if req.method == "GET":
+            # 同じ event を 2 回返す (at-least-once の典型 scenario)
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "event_id": "evt_dup",
+                            "topic_id": "top_src",
+                            "event_type": "in",
+                            "stored_at": "2026-06-13T00:00:01+00:00",
+                            "cursor": "cursor_dup",
+                            "payload": {"n": 1},
+                        },
+                        {
+                            "event_id": "evt_dup",  # 重複
+                            "topic_id": "top_src",
+                            "event_type": "in",
+                            "stored_at": "2026-06-13T00:00:02+00:00",
+                            "cursor": "cursor_dup2",
+                            "payload": {"n": 1},
+                        },
+                    ],
+                    "next": {"has_more": False},
+                },
+            )
+        if req.method == "POST":
+            publish_count["n"] += 1
+            return httpx.Response(
+                201, json={"event_id": f"evt_out_{publish_count['n']}"}
+            )
+        return httpx.Response(500)
+
+    async def transform(evt: Event) -> dict:
+        return {"out": evt.payload["n"]}
+
+    client = _make_client_for_pipeline(handler)
+    try:
+        pipe = client.pipeline(
+            source_topic="top_src",
+            sink_topic="top_sink",
+            transform=transform,
+            pull_interval_seconds=0.01,
+        )
+        # max_events=1: 最初の dedupe-新規 event のみ処理
+        processed = await pipe.run(max_events=1)
+        assert processed == 1
+        assert publish_count["n"] == 1  # 重複 2 件目は dedupe で skip
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_retention_miss_aborts_run() -> None:
+    """pipeline の read で RetentionMissError が発生したら run が中断される."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/token":
+            return httpx.Response(
+                200, json={"access_token": "aat_p", "token_type": "Bearer", "expires_in": 600}
+            )
+        return httpx.Response(
+            404,
+            json={"detail": {"error": "RETENTION_MISS", "message": "cursor outside retention"}},
+        )
+
+    async def transform(evt: Event) -> dict:
+        return {}
+
+    client = _make_client_for_pipeline(handler)
+    try:
+        pipe = client.pipeline(
+            source_topic="top_src",
+            sink_topic="top_sink",
+            transform=transform,
+        )
+        with pytest.raises(RetentionMissError):
+            await pipe.run()
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -167,16 +411,16 @@ async def test_pipeline_runs_transform_publishes_to_sink() -> None:
                             "event_id": "evt_001",
                             "topic_id": "top_src",
                             "event_type": "in",
-                            "sequence_number": 1,
-                            "stored_at": "2026-05-17T00:00:00+00:00",
+                            "stored_at": "2026-06-13T00:00:01+00:00",
+                            "cursor": "cursor_001",
                             "payload": {"n": 1},
                         },
                         {
                             "event_id": "evt_002",
                             "topic_id": "top_src",
                             "event_type": "in",
-                            "sequence_number": 2,
-                            "stored_at": "2026-05-17T00:00:01+00:00",
+                            "stored_at": "2026-06-13T00:00:02+00:00",
+                            "cursor": "cursor_002",
                             "payload": {"n": 2},
                         },
                     ],
@@ -184,16 +428,11 @@ async def test_pipeline_runs_transform_publishes_to_sink() -> None:
                 },
             )
         if req.method == "POST" and req.url.path == "/topics/top_sink/events":
-            import json
-
             body = json.loads(req.content)
             state["published"].append((req.headers.get("idempotency-key"), body["payload"]))
             return httpx.Response(
                 201,
-                json={
-                    "event_id": f"evt_out_{len(state['published'])}",
-                    "sequence_number": len(state["published"]),
-                },
+                json={"event_id": f"evt_out_{len(state['published'])}"},
             )
         return httpx.Response(500, text=f"unexpected: {req.method} {req.url.path}")
 
@@ -219,8 +458,8 @@ async def test_pipeline_runs_transform_publishes_to_sink() -> None:
         assert state["published"][0][0] == "idk_pipe_evt_001"
         assert state["published"][0][1] == {"out": 10}
         assert state["published"][1][1] == {"out": 20}
-        # checkpoint は最後の処理成功 source event_id
-        assert await cp.load("top_src") == "evt_002"
+        # checkpoint は opaque cursor
+        assert await cp.load("top_src") == "cursor_002"
     finally:
         await client.aclose()
 
@@ -244,8 +483,8 @@ async def test_pipeline_filter_transform_returns_none_skips_publish() -> None:
                             "event_id": "evt_x",
                             "topic_id": "top_src",
                             "event_type": "in",
-                            "sequence_number": 5,
-                            "stored_at": "2026-05-17T00:00:00+00:00",
+                            "stored_at": "2026-06-13T00:00:00+00:00",
+                            "cursor": "cursor_x",
                             "payload": {"keep": False},
                         }
                     ],
@@ -253,7 +492,7 @@ async def test_pipeline_filter_transform_returns_none_skips_publish() -> None:
                 },
             )
         published.append(req.url.path)
-        return httpx.Response(201, json={"event_id": "evt_o", "sequence_number": 1})
+        return httpx.Response(201, json={"event_id": "evt_o"})
 
     async def transform(evt: Event):
         return None  # filter out
@@ -268,15 +507,12 @@ async def test_pipeline_filter_transform_returns_none_skips_publish() -> None:
             checkpoint_store=cp,
             pull_interval_seconds=0.01,
         )
-        # max_events=0 だと開始即 return → 1 件目で停止しないので、 transform 後の publish スキップを確認するため
-        # max_events=1 で stop しない設定にして、 transform 後の publish 0 件を確認
-        # → filter なら processed=0 のまま、 stop しないので tail-loop に入る。 timeout で打ち切り。
         try:
             await asyncio.wait_for(pipe.run(max_events=1), timeout=0.5)
         except TimeoutError:
             pass
         assert published == []  # publish 起きていない
-        assert await cp.load("top_src") == "evt_x"  # checkpoint だけ進んだ
+        assert await cp.load("top_src") == "cursor_x"  # opaque cursor で checkpoint
     finally:
         await client.aclose()
 

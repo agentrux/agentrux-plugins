@@ -4,28 +4,25 @@ identity:
   label:
     en_US: Publish Event
     ja_JP: イベント発行
-  description:
-    en_US: Publish an event to an AgenTrux topic
-    ja_JP: AgenTrux トピックにイベントを発行する
 
 description:
   human:
     en_US: Publishes a JSON event to the specified AgenTrux topic
     ja_JP: 指定した AgenTrux トピックに JSON イベントを発行します
-  llm: Publish a JSON event to an AgenTrux PubSub topic. Use this to send messages, results, or notifications to other agents.
+  llm: Publish a JSON event to an AgenTrux PubSub topic. Use this to send messages, results, or notifications to other agents. If you do not already know the topic_id, FIRST call agentrux_get_topics(action=write) and use a topic_id (UUID) from its response.
 
 parameters:
   - name: topic_id
-    type: dynamic-select
+    type: string
     required: true
     label:
-      en_US: Topic
-      ja_JP: Topic
+      en_US: Topic ID
+      ja_JP: Topic ID
     human_description:
-      en_US: Select an AgenTrux topic (write-granted topics only)
-      ja_JP: AgenTrux トピックを選択（write 権限のある Topic のみ）
-    llm_description: UUID of the target AgenTrux topic (write-granted)
-    form: form
+      en_US: AgenTrux topic id (top_<uuid> or UUID). Use the List Topics tool to find it.
+      ja_JP: AgenTrux トピック id（top_<uuid> または UUID）。List Topics ツールで確認できます。
+    llm_description: The target AgenTrux topic id (a UUID, optionally prefixed top_). Obtain it from agentrux_get_topics(action=write) and copy the exact topic_id value; do NOT pass a topic name.
+    form: llm
 
   - name: event_type
     type: string

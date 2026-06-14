@@ -46,16 +46,23 @@ class _MessageEnvelope:
 
     Only the fields the plugin tools actually read are exposed. Avoids a
     dependency on the server-side `agentrux` package.
+
+    cluster-agnostic ordering §3-3: sequence_number は API から消滅。
+    cursor (opaque token) を使って resume する。sequence_no 属性は後方互換のため
+    残すが常に None。永続参照キーは event_id のみ。
     """
 
     __slots__ = (
-        "event_id", "sequence_no", "timestamp", "type", "payload",
+        "event_id", "cursor", "sequence_no", "timestamp", "type", "payload",
         "payload_ref", "producer_script",
     )
 
     def __init__(self, raw: dict[str, Any]) -> None:
         self.event_id = raw.get("event_id", "")
-        self.sequence_no = raw.get("sequence_number", raw.get("sequence_no"))
+        # cursor は opaque pass-through (versioned token or evt_<id>)。
+        self.cursor = raw.get("cursor") or raw.get("event_id", "")
+        # sequence_no は廃止 (ordering 非保証)。後方互換のため属性は残すが常に None。
+        self.sequence_no: None = None
         self.timestamp = raw.get("timestamp")
         self.type = raw.get("event_type", raw.get("type", ""))
         self.payload = raw.get("payload")
@@ -289,11 +296,14 @@ class AgentRuxClient:
 class _SSESubscription:
     """Async iterator over the SSE event stream of a single topic.
 
-    Yields MessageEnvelope. Each SSE frame's `data:` line is parsed as
-    JSON: server may publish either a full event body (Phase 2.4 inline)
-    or a `{"event_id": "evt_...", "sequence_number": N}` hint. For the
-    hint shape the iterator does a follow-up GET to materialize the
-    event so the consumer always sees full payload.
+    Yields MessageEnvelope. Each SSE frame:
+      id: <opaque_cursor>
+      event: hint
+      data: {}
+
+    cluster-agnostic ordering §3-3: frame `id` = opaque cursor (versioned token)。
+    旧 data.sequence_number / data.seq は廃止。hint 受信後に follow-up GET で
+    event を取得 (consumer は常に full payload を受け取る)。
     """
 
     def __init__(self, client: AgentRuxClient, topic_id: str) -> None:
@@ -351,7 +361,8 @@ class _SSESubscription:
             data = json.loads(frame.get("data", "{}"))
         except json.JSONDecodeError:
             return None
-        # Phase 2.5b SSOT: `data: {"seq": N}` + `id: evt_<uuid>`.
+        # cluster-agnostic ordering §3-3: frame `id` = opaque cursor。
+        # `data.seq` は廃止。reconnect は Last-Event-ID に cursor を渡す。
         evt_id = frame.get("id") or data.get("event_id") or ""
         if not evt_id:
             return None

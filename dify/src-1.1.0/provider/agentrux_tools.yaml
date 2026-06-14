@@ -108,6 +108,7 @@ credentials_for_provider:
       en_US: "act_..."
 
 tools:
+  - tools/get_topics.yaml
   - tools/publish.yaml
   - tools/read.yaml
   - tools/upload.yaml

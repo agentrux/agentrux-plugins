@@ -69,11 +69,16 @@ class ObjectStorageError(TemporaryError):
     """503 object_storage_error (presigned PUT / GET 失敗)."""
 
 
-class GapDetectedError(AgenTruxError):
-    """pipeline 専用: sequence gap を検出 (re-replay は ops 判断)."""
+class RetentionMissError(AgenTruxError):
+    """pipeline / read 専用: resume 位置が retention 外 (server から RETENTION_MISS).
 
-    def __init__(self, message: str, *, topic_id: str, gap_after: int, gap_size: int) -> None:
+    旧 GapDetectedError (seq gap 検出) の代替。 欠落検出は server 駆動になり、
+    rollback 由来の偽 gap と本物の欠落を区別できる。
+    re-replay は ops 判断 (SDK は中断して raise するのみ)。
+
+    SSOT: cluster_agnostic_ordering.md §2, sdk_design.md §7
+    """
+
+    def __init__(self, message: str, *, topic_id: str | None = None) -> None:
         super().__init__(message)
         self.topic_id = topic_id
-        self.gap_after = gap_after
-        self.gap_size = gap_size

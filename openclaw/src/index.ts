@@ -1305,11 +1305,12 @@ const plugin = {
       query.set("order", "desc");
       if (params.event_type) query.set("type", params.event_type);
       const result = await authRequest(creds, "GET", `/topics/${ensureTopPrefix(topicId)}/events?${query}`);
-      // Phase 2.5a SSOT: response.events (旧 items は廃止)、 event.{event_id, sequence_number, event_type, payload, metadata?}
+      // cluster-agnostic ordering §2: response.events、 event.{event_id, cursor, event_type, payload, metadata?}
+      // sequence_number は API から消滅 (ordering 非保証)。
       const events = result.events || [];
       if (events.length === 0) return { content: [{ type: "text", text: `No events found on "${params.topic || topicId}".` }] };
       const lines = events.map((e: any) =>
-        `[seq:${e.sequence_number}] ${e.event_type} — ${JSON.stringify(e.payload)} (${e.metadata?.correlation_id || "-"})`,
+        `[${e.event_id}] ${e.event_type} — ${JSON.stringify(e.payload)} (${e.metadata?.correlation_id || "-"})`,
       );
       return { content: [{ type: "text", text: `${events.length} events on "${params.topic || topicId}":\n${lines.join("\n")}` }] };
     },

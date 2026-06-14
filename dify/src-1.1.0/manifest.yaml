@@ -1,6 +1,6 @@
 author: agentrux
 name: agentrux-tools
-version: 1.4.0
+version: 1.4.4
 type: plugin
 description:
   en_US: AgenTrux PubSub Tools — publish, read, and upload events to AgenTrux topics (Activation Code or OAuth 2.1 + PKCE)

@@ -1,17 +1,17 @@
-"""New Event handler with per-subscription cursor (Phase 2.5a SSOT)。
+"""New Event handler with per-subscription cursor (cluster-agnostic ordering §3-3)。
 
 Cursor semantics:
   - Stored on disk keyed by subscription_id (same pattern as AC cache).
-  - Format: `{last_processed_event_id: "evt_<uuid>"}` (旧 last_processed_seq int は廃止)
+  - Format: `{last_processed_event_id: "evt_<uuid>"}` (cursor = last processed event_id)
   - On each hint, pull events `?after=<cursor evt_id>` (limit 50)。
-  - Dispatch the OLDEST unprocessed event whose sequence_number <= hint's,
-    advance cursor to that event's event_id。
+  - Dispatch the OLDEST unprocessed event (best-effort UUIDv7 ordering by event_id)。
+  - ordering 非保証: sequence_number による cap/sort は廃止。dedupe は event_id で行う。
   - Remaining unprocessed events wait for future hints。
   - If hint.event_id == cursor: duplicate/reorder — ignore。
 
-新 field 名 (Phase 2 SSOT):
-  - event.event_id / event.sequence_number / event.event_type / event.payload_object_id
-  - 旧 sequence_no / type / object_id / download_url は廃止
+新 field 名 (cluster-agnostic §2):
+  - event.event_id / event.cursor / event.event_type / event.payload_object_id
+  - 旧 sequence_number / sequence_no / type / object_id / download_url は廃止
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ class NewEventEvent(Event):
     ) -> Variables:
         topic_id = payload.get("topic_id", "")
         hint_event_id = payload.get("event_id", "")
-        hint_seq = payload.get("sequence_number")
+        # cursor は opaque pass-through。hint 内の sequence_number は廃止 (ordering 非保証)。
 
         runtime = getattr(self, "runtime", None)
         subscription = getattr(runtime, "subscription", None) if runtime else None
@@ -220,19 +220,10 @@ class NewEventEvent(Event):
                     order="asc",
                 )
 
-        # hint の sequence_number 以下のみ処理 (それより新しいものは次回 hint で扱う)。
-        # hint_seq が無い (旧 webhook 互換 path) なら filter しない。
-        try:
-            seq_cap = int(hint_seq) if hint_seq is not None else None
-        except (TypeError, ValueError):
-            seq_cap = None
-        unprocessed = sorted(
-            (
-                e for e in events
-                if seq_cap is None or int(e.get("sequence_number", 0)) <= seq_cap
-            ),
-            key=lambda e: int(e.get("sequence_number", 0)),
-        )
+        # cluster-agnostic ordering §2-3: ordering 非保証。sequence_number による
+        # cap/sort は廃止。server は ?order=asc で best-effort 時刻順 (created_at, id) を返す。
+        # client 側では re-sort しない — server order を信頼し、最初の未処理 event を dispatch。
+        unprocessed = list(events)
         if not unprocessed:
             raise EventIgnoreError()
 
@@ -254,7 +245,9 @@ class NewEventEvent(Event):
             raise EventIgnoreError()
 
         event_id = event.get("event_id", "")
-        event_seq = int(event.get("sequence_number", 0))
+        # sequence_number は API から消滅 (cluster-agnostic ordering §2-3)。
+        # Dify workflow 互換性のため変数は残すが、値は常に 0。
+        event_seq = 0
         event_type = event.get("event_type", "")
         event_payload = event.get("payload", {}) or {}
         event_metadata = event.get("metadata", {}) or {}

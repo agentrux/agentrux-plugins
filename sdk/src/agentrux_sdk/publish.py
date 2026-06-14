@@ -99,7 +99,7 @@ async def publish(
       idempotency_key: None なら client が uuid4 生成
       metadata: 任意の小辞書 (server 側で event.metadata_json に格納)
 
-    Returns: PublishResult(event_id, sequence_number, idempotent_replayed)
+    Returns: PublishResult(event_id, idempotent_replayed)
     """
     _validate_topic_id(topic_id)
     raw = _serialize(payload)
@@ -160,7 +160,6 @@ async def _publish_inline(
     rb = r.json()
     return PublishResult(
         event_id=rb["event_id"],
-        sequence_number=int(rb["sequence_number"]),
         idempotent_replayed=r.headers.get("Idempotent-Replayed") == "true",
     )
 
@@ -222,6 +221,5 @@ async def _publish_object_ref(
     rb = r3.json()
     return PublishResult(
         event_id=rb["event_id"],
-        sequence_number=int(rb["sequence_number"]),
         idempotent_replayed=r3.headers.get("Idempotent-Replayed") == "true",
     )
