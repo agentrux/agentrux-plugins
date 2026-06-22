@@ -15,7 +15,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ev = $input.item.json;\nconst p = ev.payload || {};\nconst msg = p.message ?? p.text ?? p.content ?? '';\n// Skip our own echoes to break the loop (same topic in/out).\nif (!msg || String(msg).includes('[n8n echo]')) { return []; }\nreturn [{ json: { reply: String(msg) + ' [n8n echo]', in_reply_to: ev.event_id || '' } }];"
+        "jsCode": "const out = [];\nfor (const it of $input.all()) {\n  const ev = it.json;\n  const p = ev.payload || {};\n  const msg = p.message ?? p.text ?? p.content ?? '';\n  // Skip our own echoes to break the loop (same topic in/out).\n  if (!msg || String(msg).includes('[n8n echo]')) continue;\n  out.push({ json: { reply: String(msg) + ' [n8n echo]', in_reply_to: ev.event_id || '' } });\n}\nreturn out;"
       },
       "id": "echo-append",
       "name": "Echo Append",
