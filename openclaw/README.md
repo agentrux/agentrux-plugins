@@ -2,8 +2,8 @@
 
 Connect your OpenClaw agent to other agents via AgenTrux — authenticated Pub/Sub for autonomous agents.
 
-- **Plugin version:** `1.0.22`
-- **Target host:** OpenClaw **v8** (uses the v8 ChannelPlugin SDK pattern from `openclaw-nostr`)
+- **Plugin version:** `1.1.0`
+- **Target host:** OpenClaw **2026.6.x** (verified on 2026.6.9). 1.1.0 follows the current channel-plugin registration contract; older `1.0.x` does **not** load as a channel on 2026.6.x.
 - **Tested against:** AgenTrux production API (`https://api.agentrux.com`)
 
 ## Activation model
@@ -33,31 +33,47 @@ Transport hardening carried over from earlier releases:
 
 ## Install
 
+Install from the npm registry (CLI only — OpenClaw has no GUI plugin installer):
+
 ```bash
-# From the local tarball that ships with this repo:
-openclaw plugins install ./agentrux-openclaw-plugin-1.0.22.tgz
-
-# Or, if it has been published to a registry:
-openclaw plugins install @agentrux/openclaw-plugin@1.0.22
-
-openclaw plugins list   # confirm: agentrux-openclaw-plugin (1.0.22) Format: openclaw
+openclaw plugins install npm:@agentrux/openclaw-plugin@1.1.0
+openclaw plugins list   # confirm: agentrux-openclaw-plugin (1.1.0) enabled
 ```
+
+Pin a version with `@1.1.0` (or use `@latest`). The plain form
+`openclaw plugins install @agentrux/openclaw-plugin@1.1.0` also resolves via npm.
 
 ## Activation
 
-### Step 1 — Configure topics in `openclaw.json` (one time)
+### Step 1 — Allow the plugin and configure the channel (one time)
 
-The plugin needs three stable IDs in `openclaw.json` to know which topics to watch and which OpenClaw agent to dispatch to. Use `openclaw config set`:
+**1a. Add the plugin to `plugins.allow` (required).** On OpenClaw 2026.6.x a non-bundled channel plugin only starts if its id is in the `plugins.allow` list. Without this the channel never starts and no events are received.
 
 ```bash
-openclaw config set plugins.entries.agentrux-openclaw-plugin.config.commandTopicId "<UUID>"
-openclaw config set plugins.entries.agentrux-openclaw-plugin.config.resultTopicId  "<UUID>"
-openclaw config set plugins.entries.agentrux-openclaw-plugin.config.agentId        "<your-openclaw-agent-id>"
-# optional, defaults to https://api.agentrux.com:
-openclaw config set plugins.entries.agentrux-openclaw-plugin.config.baseUrl "https://api.agentrux.com"
+openclaw config set plugins.allow '["agentrux-openclaw-plugin","codex"]'
 ```
 
-These three fields are stable identifiers, not secrets. They never change after initial setup.
+> Keep any other non-bundled plugins you rely on (e.g. `codex`) in the list — `plugins.allow` is an allowlist.
+
+**1b. Configure the channel under `channels.agentrux`.** The plugin reads its topic routing from the `channels.agentrux` config block. Set the keys one at a time with `openclaw config set`:
+
+```bash
+openclaw config set channels.agentrux.enabled       true
+openclaw config set channels.agentrux.commandTopicId "<UUID>"
+openclaw config set channels.agentrux.resultTopicId  "<UUID>"
+openclaw config set channels.agentrux.agentId        "<your-openclaw-agent-id>"
+# optional, defaults to https://api.agentrux.com:
+openclaw config set channels.agentrux.baseUrl        "https://api.agentrux.com"
+
+openclaw config validate     # → Config valid
+openclaw channels list       # → @agentrux/openclaw-plugin default: installed, configured, enabled
+```
+
+These IDs are stable identifiers, not secrets. They never change after initial setup.
+
+> **Config location:** settings live under **`channels.agentrux`**, not the old `plugins.entries.agentrux-openclaw-plugin.config` path (that path does not start the channel on 2026.6.x). `openclaw channels add` is for OpenClaw's built-in channels only and does not cover AgenTrux — use `openclaw config set` as shown.
+>
+> **Two topics vs one:** prefer separate `commandTopicId` and `resultTopicId` and leave `excludeOwnEvents` at its default (`true`). Using a single topic for both with `excludeOwnEvents: false` can echo your own replies back into the channel (loop).
 
 ### Step 2 — Issue an activation code
 
@@ -91,7 +107,7 @@ On start the gateway loads `~/.agentrux/credentials.json`. If it is present you 
 
 ```
 [plugins] [agentrux] Registered as ChannelPlugin
-[agentrux] Watching commandTopic <UUID>
+[agentrux] Gateway starting: topic=<commandTopicId> agent=<agentId> messagingTopics=<n>
 ```
 
 If no credentials exist yet, the channel is disabled and the gateway logs:
@@ -128,10 +144,11 @@ systemctl --user restart openclaw-gateway.service
 
 ## Configuration Reference
 
-All keys live under `plugins.entries.agentrux-openclaw-plugin.config` in `openclaw.json`. Set them with `openclaw config set` (preferred — atomic and validated against the schema) or hand-edit the file. None of these are secrets, just stable identifiers.
+All keys live under `channels.agentrux` in `openclaw.json`. Set them with `openclaw config set channels.agentrux.<key> <value>` (one key at a time) or hand-edit the file. None of these are secrets, just stable identifiers.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `enabled` | boolean | — | Set `true` to enable the channel |
 | `commandTopicId` | string | *required* | Topic ID to monitor for incoming commands |
 | `resultTopicId` | string | *required* | Topic ID to publish results to |
 | `agentId` | string | *required* | OpenClaw agent ID that processes commands |
@@ -169,7 +186,7 @@ If `/auth/refresh` returns 4xx (expired or revoked refresh token), the plugin cl
 
 - **SSE hint + Pull drain**: SSE is used as a hint only; actual events are fetched via Pull API from the waterline, eliminating event loss on SSE disconnects
 - **Inbound attachments**: Text files (≤50KB) inlined into the message; binary/large files passed as presigned URLs
-- **Outbound attachments**: LLM can upload files via `agentrux_upload` tool; attachments auto-included in response
+- **Outbound attachments**: LLM can upload files via `agentrux_deliver` tool; attachments auto-included in response
 - **Per-topic waterline**: Persistent waterline per topic in `~/.agentrux/waterline.json` — crash-safe resume with no duplicates
 - **Safety Poller**: Periodic Pull fallback (default 60s) in case SSE hints are missed
 - **Two-layer dedup**: event_id (transport) + request_id (application)
@@ -180,12 +197,13 @@ If `/auth/refresh` returns 4xx (expired or revoked refresh token), the plugin cl
 | Tool | Description |
 |------|-------------|
 | `agentrux_activate` | Connect with a one-time activation code (`act_...`); writes `credentials.json`. This is the primary activation path. |
+| `agentrux_install_topology` | Guided topology setup helper. |
 | `agentrux_setup_via_device_code` | RFC 8628 device-code setup (writes `device_credentials.json`; not yet read by the gateway runtime). |
 | `agentrux_publish` | Send an event to a topic |
 | `agentrux_read` | Read events from a topic |
 | `agentrux_send_message` | Send a message and wait for reply |
 | `agentrux_redeem_grant` | Redeem an invite code for cross-Alias (cross-account) access |
-| `agentrux_upload` | Upload a local file and get a download URL (auto-attaches to response during ingress) |
+| `agentrux_deliver` | Upload a local file and get a download URL (auto-attaches to response during ingress) |
 
 ## Architecture
 
@@ -206,7 +224,7 @@ AgenTrux Topic ─────────────────────�
                                         ▼
                                    ChannelPlugin reply pipeline → LLM + Tools
                                         │
-                                        ├─ agentrux_upload → pendingAttachments
+                                        ├─ agentrux_deliver → pendingAttachments
                                         ▼
                                    deliver() → publish → Results Topic
                                         │         (text + attachments)
