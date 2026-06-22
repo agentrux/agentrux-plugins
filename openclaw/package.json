@@ -1,6 +1,6 @@
 {
   "name": "@agentrux/openclaw-plugin",
-  "version": "1.0.22",
+  "version": "1.1.0",
   "description": "OpenClaw plugin for AgenTrux — Agent-to-Agent authenticated Pub/Sub",
   "keywords": [
     "openclaw",
@@ -12,8 +12,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/AgenTrux",
-    "directory": "plugins/agentrux-openclaw-plugin"
+    "url": "https://github.com/agentrux/agentrux-plugins",
+    "directory": "openclaw"
   },
   "files": [
     "dist/",
