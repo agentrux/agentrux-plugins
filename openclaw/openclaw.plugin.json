@@ -6,11 +6,6 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": [
-      "commandTopicId",
-      "resultTopicId",
-      "agentId"
-    ],
     "properties": {
       "commandTopicId": {
         "type": "string",
