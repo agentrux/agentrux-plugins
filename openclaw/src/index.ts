@@ -101,6 +101,15 @@ function resolveMessagingTopics(raw: any[]): MessagingTopic[] {
     }));
 }
 
+// Extract the channel config block (`cfg.channels.agentrux`) from the runtime
+// config the gateway passes to the channel `config` adapter. Returns null when
+// the channel is not configured so callers can fall back to the register-time
+// pluginConfig (legacy plugins.entries path).
+function resolveChannelConfig(cfg: any): any | null {
+  const entry = cfg?.channels?.agentrux;
+  return entry && typeof entry === "object" ? entry : null;
+}
+
 function resolveAccountFromPluginConfig(pluginConfig: any): AgenTruxAccount {
   return {
     commandTopicId: pluginConfig.commandTopicId ?? "",
@@ -444,7 +453,15 @@ const plugin = {
   // Store PluginRuntime at register time (SDK pattern from openclaw-nostr)
   setPluginRuntime(api.runtime);
 
-  const pluginConfig = api.pluginConfig
+  // Resolve the effective config. As an OpenClaw *channel* plugin the
+  // operator-facing config lives under `cfg.channels.agentrux` (the channel
+  // config path the gateway passes to listAccountIds/resolveAccount). Older
+  // installs configured the plugin under `plugins.entries[...].config`, so we
+  // keep that as a fallback for backward compatibility.
+  const channelConfig = api.config?.channels?.agentrux;
+  const pluginConfig =
+    (channelConfig && typeof channelConfig === "object" ? channelConfig : null)
+    || api.pluginConfig
     || api.config?.plugins?.entries?.["agentrux-openclaw-plugin"]?.config
     || {};
   // Make the resolved plugin config visible to the gateway module so
@@ -751,14 +768,19 @@ const plugin = {
       },
     }],
     config: {
-      listAccountIds: () => {
-        if (pluginConfig.commandTopicId && pluginConfig.resultTopicId && pluginConfig.agentId) {
+      // The gateway passes the live runtime config (`cfg`) here. Prefer the
+      // channel config path (`cfg.channels.agentrux`), then fall back to the
+      // register-time resolved pluginConfig (covers legacy plugins.entries).
+      listAccountIds: (cfg?: any) => {
+        const c = resolveChannelConfig(cfg) || pluginConfig;
+        if (c.commandTopicId && c.resultTopicId && c.agentId) {
           return ["default"];
         }
         return [];
       },
-      resolveAccount: (_cfg: any, _accountId?: string | null) => {
-        return resolveAccountFromPluginConfig(pluginConfig);
+      resolveAccount: (cfg: any, _accountId?: string | null) => {
+        const c = resolveChannelConfig(cfg) || pluginConfig;
+        return resolveAccountFromPluginConfig(c);
       },
       isEnabled: (account: AgenTruxAccount) =>
         !!(account.commandTopicId && account.resultTopicId && account.agentId),
