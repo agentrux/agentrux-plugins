@@ -11,7 +11,10 @@
       "name": "AgenTrux Trigger",
       "type": "@agentrux/n8n-nodes-agentrux.agenTruxTrigger",
       "typeVersion": 1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
@@ -21,29 +24,53 @@
       "name": "Echo Append",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [520, 300]
+      "position": [
+        520,
+        300
+      ]
     },
     {
       "parameters": {
         "operation": "publishEvent",
         "topicId": "top_REPLACE_ME",
         "eventType": "n8n.echo",
-        "payload": "={{ JSON.stringify({ message: $json.reply, in_reply_to: $json.in_reply_to }) }}"
+        "payload": "={{ JSON.stringify({ format: 'markdown', content: $json.reply, in_reply_to: $json.in_reply_to }) }}"
       },
       "id": "agentrux-publish",
       "name": "AgenTrux Publish",
       "type": "@agentrux/n8n-nodes-agentrux.agenTrux",
       "typeVersion": 1,
-      "position": [800, 300]
+      "position": [
+        800,
+        300
+      ]
     }
   ],
   "connections": {
     "AgenTrux Trigger": {
-      "main": [[{ "node": "Echo Append", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Echo Append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Echo Append": {
-      "main": [[{ "node": "AgenTrux Publish", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "AgenTrux Publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }
