@@ -45,7 +45,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ steps.meta.outputs.plugin }}
-        run: npm install
+        # --ignore-scripts: these plugins are TS-only (build = tsc, no native deps).
+        # A transitive dep (n8n-workflow -> isolated-vm) fails its native gyp build
+        # on newer runner Node/V8 and is not needed to publish the community node.
+        run: npm install --ignore-scripts
 
       - name: Build
         working-directory: ${{ steps.meta.outputs.plugin }}
