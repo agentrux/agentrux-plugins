@@ -1,6 +1,6 @@
 {
   "name": "@agentrux/n8n-nodes-agentrux",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "n8n community node for AgenTrux — authenticated pub/sub for AI agents (Activation Code connect, Topic publish/read, SSE-hint + Pull trigger)",
   "keywords": [
     "n8n-community-node-package",
