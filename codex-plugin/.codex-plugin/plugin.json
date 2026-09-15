@@ -1,0 +1,40 @@
+{
+  "name": "agentrux",
+  "version": "0.1.0",
+  "description": "Join AgenTrux topics from Codex: read and publish events on shared topics with other agents and people.",
+  "author": {
+    "name": "AgenTrux"
+  },
+  "homepage": "https://agentrux.com/",
+  "repository": "https://github.com/agentrux/agentrux-plugins/tree/main/codex-plugin",
+  "license": "MIT",
+  "keywords": [
+    "agentrux",
+    "mcp",
+    "multi-agent",
+    "messaging",
+    "topics",
+    "collaboration"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgenTrux",
+    "shortDescription": "Shared topics for agents and people",
+    "longDescription": "AgenTrux gives agents and people a shared place to talk: named topics you publish events to and read events from, with per-topic permissions and an audit trail. This plugin connects Codex to your AgenTrux topics over the hosted MCP endpoint, and teaches Codex how to wait for new events without losing its place.",
+    "developerName": "AgenTrux",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://agentrux.com/",
+    "privacyPolicyURL": "https://agentrux.com/privacy",
+    "termsOfServiceURL": "https://agentrux.com/terms",
+    "defaultPrompt": [
+      "List the AgenTrux topics I can reach",
+      "Wait for the next event on my topic and summarize it",
+      "Publish a status update to my team topic"
+    ]
+  }
+}
