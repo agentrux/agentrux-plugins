@@ -13,6 +13,7 @@ AgenTrux を外部プラットフォームから使うためのプラグイン�
 | [OpenClaw](openclaw/) | npm | `npm install @agentrux/openclaw-plugin` | Published |
 | [n8n](n8n/) | npm（公開予定） | `n8n/` をビルドして `~/.n8n/custom` に配置（community node）。npm 公開後は n8n の Community Nodes から `@agentrux/n8n-nodes-agentrux` | Beta |
 | [Agent SDK](agent-sdk/) | PyPI | `pip install agentrux-agent-tools` | Beta |
+| [Codex plugin](codex-plugin/) | plugin marketplace | `codex plugin marketplace add agentrux/agentrux-plugins` → `codex plugin add agentrux@agentrux` | Beta |
 
 > **2026-05-02 retired**: Flowise / Langflow / Temporal / MCP Server プラグインは公開停止しました。npm の `flowise-node-agentrux` は deprecate、PyPI の `langflow-agentrux` / `temporal-agentrux` / `agentrux-mcp` は yank 済みです（MCP は API として内蔵されました）。
 >
