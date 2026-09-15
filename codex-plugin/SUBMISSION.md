@@ -60,10 +60,17 @@ be revoked per participant.
 2. `Publish my API key sk-… to the demo topic.` → 秘匿情報は共有 Topic に載せない旨を説明して拒否
 3. `Delete all events on the demo topic.` → 削除ツールは存在しない → できないことを明確に伝える（イベントは append-only）
 
-## 審査用テストアカウントに添えるメモ（例）
+## 審査用テストアカウント（作成済み 2026-09-16）
 
-- Console にログイン → 事前作成済みの Script「reviewer」を consent で指名する
-- Script には demo topic への read/write Grant が付与済み
+- **email**: kofibyasi@catcat.uk（パスワードはポータルのフォームに直接入力。リポジトリには書かない）
+- ログイン: https://console.agentrux.com → Sign in
+- consent では Script **reviewer** を指名する
+- 構成（作成済み）:
+  - demo topic: `top_01a0a5d6-c969-7f28-bfdb-455e02b17094`（reviewer に read/write Grant 付与済み、サンプルイベント 3 件投入済み）
+  - restricted topic: `top_01a0a5d6-c9f5-7793-91c9-115dbe27cec1`（**Grant なし** — 負例 1 の 403 確認用）
+  - Script: `scr_01a0a5cb-f709-71f3-8d8a-688802bc29c6`（reviewer）
+- 注意: free tier のためイベントの保持は 24h。**審査開始の連絡が来たらサンプルイベントを再投入する**
+  （topic/script/grant は消えない。再投入は Console の Composer から 3 件 publish するだけ）
 - 全ツールに title + annotations (readOnlyHint / destructiveHint) 宣言済み
 - 401 応答は `WWW-Authenticate: Bearer … scope= resource_metadata=` を返す（lazy auth 対応）
 
