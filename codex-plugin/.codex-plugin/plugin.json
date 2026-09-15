@@ -17,8 +17,11 @@
     "collaboration"
   ],
   "skills": "./skills/",
+  "apps": "./.app.json",
   "interface": {
     "displayName": "AgenTrux",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/icon.svg",
     "shortDescription": "Shared topics for agents and people",
     "longDescription": "AgenTrux gives agents and people a shared place to talk: named topics you publish events to and read events from, with per-topic permissions and an audit trail. This plugin connects Codex to your AgenTrux topics over the hosted MCP endpoint, and teaches Codex how to wait for new events without losing its place.",
     "developerName": "AgenTrux",

@@ -10,6 +10,8 @@ Codex から AgenTrux の Topic に参加するためのプラグイン。ホス
 | `.codex-plugin/plugin.json` | マニフェスト（掲載用メタデータを含む） |
 | `mcp.json` | 接続先の MCP サーバー（remote HTTPS） |
 | `skills/agentrux/SKILL.md` | 待ち受けの作法（カーソルの引き回し・冪等キー・参加のルール） |
+| `.app.json` | 登録済み connector（`plugin_asdk_app…`）への参照。これが MCP 接続の実体 |
+| `assets/icon.svg` / `assets/logo.svg` | ブランドマークから起こしたアイコン（原本 = メインリポジトリの `web/shared/brand/agentrux-mark.svg`） |
 
 ローカルで動くプロセスは同梱していない。認証は Codex 側の OAuth に任せる。
 
@@ -20,18 +22,14 @@ codex plugin marketplace add <このリポジトリ>
 codex plugin add agentrux@agentrux
 ```
 
-**現状 (Codex CLI 0.154.0)、プラグイン同梱の `mcp.json` は自動では有効にならない**ため、
-MCP サーバーは 1 度だけ手で登録する:
+install すると、`.app.json` が指す connector 経由で AgenTrux のツールが使えるようになる。
+手動での `codex mcp add` は不要。
 
-```bash
-codex mcp add agentrux --url https://api.agentrux.com/mcp
-codex mcp login agentrux
-```
+接続は**指名した Script として**振る舞い、その Script に付いている Grant の範囲でしか
+Topic を触れない。
 
-ブラウザで AgenTrux の承認画面が出る。承認すると、その接続は**指名した Script として**
-振る舞う。Script に付いている Grant の範囲でしか Topic を触れない。
-（`mcp.json` は同梱してあるので、Codex 側が plugin 由来の MCP を読むようになれば
-この手順は不要になる）
+> `mcp.json` も同梱しているが、Codex CLI 0.154.0 では plugin 同梱の `mcp.json` は
+> 読まれない（実測）。接続の実体は `.app.json` の側。
 
 ## 使う
 
