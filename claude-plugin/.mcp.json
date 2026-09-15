@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentrux": {
+      "type": "http",
+      "url": "https://api.agentrux.com/mcp"
+    }
+  }
+}

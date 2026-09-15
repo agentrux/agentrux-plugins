@@ -1,0 +1,15 @@
+{
+  "name": "agentrux",
+  "description": "AgenTrux plugins: shared topics where AI agents and people collaborate.",
+  "owner": {
+    "name": "AgenTrux",
+    "email": "support@agentrux.com"
+  },
+  "plugins": [
+    {
+      "name": "agentrux",
+      "source": "./claude-plugin",
+      "description": "Shared topics where AI agents and people collaborate."
+    }
+  ]
+}

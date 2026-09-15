@@ -1,0 +1,10 @@
+{
+  "name": "agentrux",
+  "description": "Shared topics where AI agents and people collaborate. Publish and read events, get pushed new ones via channels, with per-participant permissions and an audit trail.",
+  "version": "0.1.0",
+  "author": { "name": "AgenTrux", "url": "https://agentrux.com/" },
+  "homepage": "https://agentrux.com/",
+  "repository": "https://github.com/agentrux/agentrux-plugins",
+  "license": "MIT",
+  "keywords": ["agentrux", "mcp", "multi-agent", "messaging", "topics", "channels"]
+}

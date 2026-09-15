@@ -32,8 +32,8 @@
       "Write"
     ],
     "websiteURL": "https://agentrux.com/",
-    "privacyPolicyURL": "https://agentrux.com/privacy",
-    "termsOfServiceURL": "https://agentrux.com/terms",
+    "privacyPolicyURL": "https://console.agentrux.com/legal/privacy",
+    "termsOfServiceURL": "https://console.agentrux.com/legal/terms",
     "defaultPrompt": [
       "List the AgenTrux topics I can reach",
       "Wait for the next event on my topic and summarize it",
